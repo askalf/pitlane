@@ -9,7 +9,8 @@ import { test } from 'node:test';
 import { CSP, STALE_MS, pageHtml, publicServer, respond, verdict } from './pitlane-public.mjs';
 
 const AT = Date.parse('2026-10-30T23:00:00Z');
-const STATS = { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 1240, queueWaitMs: { p50: 2049, p90: 16000 }, targets: { p50Ms: 5000, p90Ms: 30000 }, finished: 1300, runnerSuspect: 0 };
+const HOURS = Array.from({ length: 24 }, (_, i) => ({ from: new Date(AT - (24 - i) * 3600000).toISOString(), jobs: i === 3 ? 0 : 50, p50: i === 3 ? null : 2000, p90: i === 3 ? null : i === 23 ? 37000 : 8000 }));
+const STATS = { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 1240, queueWaitMs: { p50: 2049, p90: 16000 }, targets: { p50Ms: 5000, p90Ms: 30000 }, finished: 1300, runnerSuspect: 0, lastHour: { jobs: 50, p50: 2000, p90: 37000 }, hours: HOURS };
 const BADGE = { schemaVersion: 1, label: 'CI on pitlane', cacheSeconds: 300, message: 'starts in 2 s (p50)', color: 'brightgreen' };
 
 function publicDir({ stats = STATS, badge = BADGE } = {}) {
@@ -95,6 +96,26 @@ test('text from the files is escaped on the page', () => {
   assert.ok(pageHtml({ ...STATS, at: '<img src=x>', stale: true }, AT).includes('unknown time'));
 });
 
+test('the last hour and the hour buckets are published as numbers only, at most 24, and drawn as bars from classes', () => {
+  const hours = [{ from: 'x', jobs: 1, p50: 1, p90: 1, repo: 'leak/repo' }, ...HOURS];
+  const dir = publicDir({ stats: { ...STATS, lastHour: { jobs: 50, p50: 2000, p90: 37000, worst: 'leak/repo' }, hours } });
+  const body = respond(dir, '/stats.json', AT).body;
+  assert.equal(body.hours.length, 24);
+  assert.deepEqual(body.hours[23], HOURS[23]);
+  assert.deepEqual(body.lastHour, { jobs: 50, p50: 2000, p90: 37000 });
+  assert.ok(!JSON.stringify(body).includes('leak'));
+  const html = respond(dir, '/', AT).html;
+  assert.equal((html.match(/<span class="bar /g) || []).length, 24);
+  assert.ok(html.includes('Last hour') && html.includes('p90 37 s'));
+  assert.ok(html.includes('title="22:00Z: 50 jobs, p50 2 s, p90 37 s"'), 'the newest hour, over the target');
+  assert.ok(html.includes('class="bar warn h5"'), 'thirty-seven seconds: over the target, inside three times it, five tenths of the bar');
+  assert.ok(html.includes('class="bar none h0" title="02:00Z: no jobs"'), 'an empty hour is a stub');
+  assert.ok(!html.includes(' style='));
+  const none = respond(publicDir({ stats: { ...STATS, hours: 'no', lastHour: null } }), '/', AT);
+  assert.deepEqual(respond(publicDir({ stats: { ...STATS, hours: 'no', lastHour: null } }), '/stats.json', AT).body.hours, []);
+  assert.ok(!none.html.includes('The day by hour') && none.html.includes('Last hour'));
+});
+
 test('the policy allows exactly the style block the page carries and nothing else', () => {
   const html = respond(publicDir(), '/', AT).html;
   const styles = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
@@ -103,6 +124,8 @@ test('the policy allows exactly the style block the page carries and nothing els
   assert.equal(CSP, `default-src 'none'; style-src 'sha256-${hash}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
   // Every meter width is a class the style block defines, never an inline style.
   for (const cls of html.matchAll(/class="(w\d+)"/g)) assert.ok(styles[0].includes(`.${cls[1]}{`), cls[1]);
+  // So is every bar height and tone.
+  for (const cls of html.matchAll(/class="bar (\w+) (h\d+)"/g)) assert.ok(styles[0].includes(`.bar.${cls[1]}{`) || cls[1] === 'ok', cls[1]), assert.ok(styles[0].includes(`.${cls[2]}{`), cls[2]);
 });
 
 test('over HTTP: loopback only, JSON headers, query ignored, HEAD has no body, other methods 405', async () => {

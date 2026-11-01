@@ -18,7 +18,7 @@ import { DISPATCHER_UNIT, HEAL, planHeals } from './pitlane-supervisor-heal.mjs'
 import { THRESHOLDS, detect, joinQueue, joinRegistrations, queuedFrom } from './pitlane-supervisor-detect.mjs';
 import { readOutcomes, summarizeOutcomes } from './pitlane-outcomes.mjs';
 import { SLICES, pushSample, sampleSlice, windowRates } from './pitlane-slices.mjs';
-import { makePrivate, privateDir, publicStats, readWaits, readerGid, summarize, writePrivate, writePublic } from './pitlane-waits.mjs';
+import { hourly, makePrivate, privateDir, publicStats, readWaits, readerGid, summarize, writePrivate, writePublic } from './pitlane-waits.mjs';
 
 const env = process.env;
 const TICK_SEC = Math.max(30, Number(env.TICK_SEC) || 60);
@@ -402,7 +402,7 @@ async function tick(state) {
   writePrivate(join(OUT_DIR, 'status.json'), `${JSON.stringify(status, null, 1)}\n`, READ_GID);
   writePrivate(join(OUT_DIR, 'metrics.prom'), metricsText(status), READ_GID);
   // The numbers shown outside the box (docs/showcase.md): 24 h, every repository together, none named.
-  try { writePublic(join(OUT_DIR, 'public'), publicStats(waits24.all, outcomes.last24h, now)); } catch (err) { log(`public numbers not written: ${err?.message ?? err}`); }
+  try { writePublic(join(OUT_DIR, 'public'), publicStats(waits24.all, outcomes.last24h, now, { lastHour: waits.all, hours: hourly(entries, now, 24) })); } catch (err) { log(`public numbers not written: ${err?.message ?? err}`); }
   // One line per finding per change, so the journal stays readable on a steady fault.
   const keys = new Set(findings.map((f) => `${f.class}|${f.row ?? ''}|${f.msg}`));
   for (const f of findings) if (!state.logged.has(`${f.class}|${f.row ?? ''}|${f.msg}`)) log(`${f.severity} ${f.class}${f.row ? ` ${f.row}` : ''}: ${f.msg}`);
