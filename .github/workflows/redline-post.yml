@@ -1,0 +1,27 @@
+# Posts this repository's finished Redline verdicts as sprayberry-redline. The review job
+# (redline.yml) runs the workflow files a pull request brings with it, so it never holds the
+# reviewer token and leaves its verdict with posted: false. This job runs on workflow_run, which
+# always runs the default branch's copy of this file, never a pull request's, on GitHub's runners,
+# and posts only when every rule in askalf/ci's scripts/redline/post.mjs holds.
+name: Redline post
+
+on:
+  workflow_run:
+    workflows: [Redline]
+    types: [completed]
+
+# The called workflow's job token reads the run, its artifact, redline.yml and the PR. The post
+# itself uses REDLINE_REVIEWER_TOKEN.
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  post:
+    # Pinned so a change to the post reaches this repository only through a reviewed bump here.
+    uses: askalf/ci/.github/workflows/redline-post-verdict.yml@a5e734dd765bbc5a6d5515b781b09e1a762be23d # main, askalf/ci#148
+    with:
+      redline-ref: a5e734dd765bbc5a6d5515b781b09e1a762be23d
+    secrets:
+      reviewer-token: ${{ secrets.REDLINE_REVIEWER_TOKEN }}
