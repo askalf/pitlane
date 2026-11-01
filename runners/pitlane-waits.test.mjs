@@ -162,17 +162,23 @@ test('hourly splits the day into hour buckets ending now, oldest first; publicSt
   const entries = [
     { at: now - 30 * 60000, repo: 'a/b', waitMs: 2000 }, { at: now - 90 * 60000, repo: 'a/b', waitMs: 60000 },
     { at: now - 23.5 * 3600000, repo: 'c/d', waitMs: 1000 }, { at: now - 25 * 3600000, repo: 'c/d', waitMs: 9000 },
+    // Stamped 30 s ahead of the reader's clock: inside the hour's totals, so inside the newest bucket too.
+    { at: now + 30000, repo: 'a/b', waitMs: 2000 },
+    // 90 s ahead: outside both.
+    { at: now + 90000, repo: 'a/b', waitMs: 999000 },
   ];
   const h = hourly(entries, now);
   assert.equal(h.length, 24);
-  assert.deepEqual(h[23], { from: now - 3600000, n: 1, p50: 2000, p90: 2000 });
+  assert.deepEqual(h[23], { from: now - 3600000, n: 2, p50: 2000, p90: 2000 });
+  assert.equal(summarize(entries, now, 3600000).all.n, h[23].n, 'the last hour and the newest bucket count the same records');
+  assert.equal(h.reduce((n, b) => n + b.n, 0), summarize(entries, now, 24 * 3600000).all.n, 'the buckets together are the day');
   assert.deepEqual(h[22], { from: now - 2 * 3600000, n: 1, p50: 60000, p90: 60000 });
   assert.deepEqual(h[0], { from: now - 24 * 3600000, n: 1, p50: 1000, p90: 1000 });
   assert.ok(h.slice(1, 22).every((b) => b.n === 0 && b.p50 === null && b.p90 === null));
-  const s = publicStats({ n: 3, p50: 2000, p90: 60000, max: 60000 }, null, now, { lastHour: summarize(entries, now, 3600000).all, hours: h });
-  assert.deepEqual(s.lastHour, { jobs: 1, p50: 2000, p90: 2000 });
+  const s = publicStats({ n: 4, p50: 2000, p90: 60000, max: 60000 }, null, now, { lastHour: summarize(entries, now, 3600000).all, hours: h });
+  assert.deepEqual(s.lastHour, { jobs: 2, p50: 2000, p90: 2000 });
   assert.equal(s.hours.length, 24);
-  assert.deepEqual(s.hours[23], { from: new Date(now - 3600000).toISOString(), jobs: 1, p50: 2000, p90: 2000 });
+  assert.deepEqual(s.hours[23], { from: new Date(now - 3600000).toISOString(), jobs: 2, p50: 2000, p90: 2000 });
   assert.deepEqual(s.hours[5], { from: new Date(now - 19 * 3600000).toISOString(), jobs: 0, p50: null, p90: null });
   assert.doesNotMatch(JSON.stringify(s), /a\/b|c\/d/);
   assert.equal('lastHour' in publicStats({ n: 1, p50: 1, p90: 1 }, null, now), false);
