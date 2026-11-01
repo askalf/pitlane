@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/askalf/pitlane/actions/workflows/ci.yml/badge.svg)](https://github.com/askalf/pitlane/actions/workflows/ci.yml)
 [![CI on pitlane](https://img.shields.io/endpoint?url=https%3A%2F%2Fpitlane.askalf.org%2Fbadge.json)](https://pitlane.askalf.org/)
-[![OpenSSF Scorecard](https://api.scorecards.dev/projects/github.com/askalf/pitlane/badge)](https://scorecard.dev/viewer/?uri=github.com/askalf/pitlane)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/askalf/pitlane/badge)](https://scorecard.dev/viewer/?uri=github.com/askalf/pitlane)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16169/badge)](https://www.bestpractices.dev/projects/16169)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
