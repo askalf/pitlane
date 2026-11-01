@@ -43,11 +43,16 @@ host's tunnel (cloudflared) publishes that as `https://pitlane.askalf.org`.
 | anything else | 404; a method other than GET or HEAD is a 405 |
 
 ```json
-{"at":"<ISO 8601 time>","window":"24h","jobs":1240,"queueWaitMs":{"p50":2049,"p90":16000},"targets":{"p50Ms":5000,"p90Ms":30000},"finished":1300,"runnerSuspect":0,"stale":false}
+{"at":"<ISO 8601 time>","window":"24h","jobs":1240,"queueWaitMs":{"p50":2049,"p90":16000},"targets":{"p50Ms":5000,"p90Ms":30000},"finished":1300,"runnerSuspect":0,
+ "lastHour":{"jobs":62,"p50":2000,"p90":37000},"hours":[{"from":"<ISO 8601 time>","jobs":62,"p50":2000,"p90":37000}],"stale":false}
 ```
 
 `finished` counts the jobs that finished in the window and `runnerSuspect` the ones the outcome record
-(`docs/outcomes.md`) suspects the runner of. In a README:
+(`docs/outcomes.md`) suspects the runner of. `lastHour` is the same median and p90 over the trailing hour (a
+record may be stamped up to a minute ahead of now, the same clock-skew allowance the totals take), and
+`hours` the window as 24 hour buckets, oldest first (`hourly`), the newest ending where the totals end: a
+day's p90 is often one hour's burst, and the page draws the buckets as bars so a reader sees which hour,
+and whether the tail is still here. In a README:
 
 ```md
 [![CI on pitlane](https://img.shields.io/endpoint?url=https%3A%2F%2Fpitlane.askalf.org%2Fbadge.json)](https://pitlane.askalf.org/)

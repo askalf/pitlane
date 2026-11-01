@@ -121,16 +121,37 @@ export function readWaits(file) {
   return out;
 }
 
+/** { n, p50, p90, max } in ms of a list of entries; nulls, not zeros, for none. */
+const statOf = (list) => {
+  const w = list.map((e) => e.waitMs).sort((a, b) => a - b);
+  return { n: w.length, p50: percentile(w, 50), p90: percentile(w, 90), max: w.length ? w[w.length - 1] : null };
+};
+
 /** { n, p50, p90, max } in ms for the entries inside the window; overall and per repository. */
 export function summarize(entries, now, windowMs) {
-  const inWin = entries.filter((e) => e.at > now - windowMs && e.at <= now + 60000);
-  const stat = (list) => {
-    const w = list.map((e) => e.waitMs).sort((a, b) => a - b);
-    return { n: w.length, p50: percentile(w, 50), p90: percentile(w, 90), max: w.length ? w[w.length - 1] : null };
-  };
+  const inWin = entries.filter((e) => e.at > now - windowMs && e.at <= now + AHEAD_MS);
   const repos = {};
-  for (const r of new Set(inWin.map((e) => e.repo))) repos[r] = stat(inWin.filter((e) => e.repo === r));
-  return { all: stat(inWin), repos };
+  for (const r of new Set(inWin.map((e) => e.repo))) repos[r] = statOf(inWin.filter((e) => e.repo === r));
+  return { all: statOf(inWin), repos };
+}
+
+/** summarize() takes a record stamped up to this far ahead of now: the clocks that stamp and read differ by seconds. */
+const AHEAD_MS = 60000;
+
+/**
+ * The last `count` hours as buckets ending now, oldest first: { from (ms), n, p50, p90 }. A day's p90
+ * can be one hour's burst, and the buckets say which hour; none of them names a repository. The newest
+ * bucket ends where summarize()'s window ends (now plus AHEAD_MS), so every record in the totals is in
+ * exactly one bucket and the card and the bars never disagree.
+ */
+export function hourly(entries, now, count = 24) {
+  const out = [];
+  for (let i = count; i >= 1; i--) {
+    const from = now - i * 3600000, to = i === 1 ? now + AHEAD_MS : from + 3600000;
+    const s = statOf(entries.filter((e) => e.at > from && e.at <= to));
+    out.push({ from, n: s.n, p50: s.p50, p90: s.p90 });
+  }
+  return out;
 }
 
 /**
@@ -208,9 +229,13 @@ export function ownJobRecords(dir, rowsRoot) {
   return changed;
 }
 
-/** The 24 h numbers anyone may read (docs/showcase.md), from summarize().all and summarizeOutcomes(). */
-export function publicStats(waits24, outcomes24, now) {
-  return {
+/**
+ * The numbers anyone may read (docs/showcase.md): the 24 h totals from summarize().all and
+ * summarizeOutcomes(), and when given, the last hour (summarize().all over one hour) and the hour
+ * buckets from hourly(). Nothing here names a repository or a row.
+ */
+export function publicStats(waits24, outcomes24, now, { lastHour, hours } = {}) {
+  const stats = {
     at: new Date(now).toISOString(),
     window: '24h',
     jobs: waits24?.n ?? 0,
@@ -219,6 +244,9 @@ export function publicStats(waits24, outcomes24, now) {
     finished: outcomes24?.n ?? null,
     runnerSuspect: outcomes24?.suspect?.n ?? null,
   };
+  if (lastHour) stats.lastHour = { jobs: lastHour.n ?? 0, p50: lastHour.p50 ?? null, p90: lastHour.p90 ?? null };
+  if (hours) stats.hours = hours.map((h) => ({ from: new Date(h.from).toISOString(), jobs: h.n, p50: h.p50, p90: h.p90 }));
+  return stats;
 }
 
 const grouped = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');

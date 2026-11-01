@@ -5,7 +5,8 @@
 // and nothing else, so a field added to those files stays on the box until it is added here too.
 //
 //   GET /             a page for people: the same numbers rendered, no script, no outside request
-//   GET /stats.json   the last 24 h: jobs, queue wait p50 and p90, targets, runner-caused failures
+//   GET /stats.json   the last 24 h: jobs, queue wait p50 and p90, targets, runner-caused failures;
+//                     the last hour beside them, and the day as 24 hour buckets
 //   GET /badge.json   a shields.io endpoint badge
 //
 // Numbers the supervisor stopped rewriting are served with stale: true, turn the badge grey and put a
@@ -39,13 +40,21 @@ function readJson(dir, name) {
 const num = (v) => (Number.isFinite(v) ? v : null);
 const str = (v) => (typeof v === 'string' && v.length <= 64 ? v : null);
 
+/** At most 24 hour buckets, each its start time and three numbers; anything else in a bucket is dropped. */
+export function hoursBody(hours) {
+  if (!Array.isArray(hours)) return [];
+  return hours.slice(-24).map((h) => ({ from: str(h?.from), jobs: num(h?.jobs), p50: num(h?.p50), p90: num(h?.p90) }));
+}
+
 /** The published fields of stats.json; any other field it carries is dropped. */
 export function statsBody(stats, stale) {
   return {
     at: str(stats.at), window: str(stats.window), jobs: num(stats.jobs),
     queueWaitMs: { p50: num(stats.queueWaitMs?.p50), p90: num(stats.queueWaitMs?.p90) },
     targets: { p50Ms: num(stats.targets?.p50Ms), p90Ms: num(stats.targets?.p90Ms) },
-    finished: num(stats.finished), runnerSuspect: num(stats.runnerSuspect), stale,
+    finished: num(stats.finished), runnerSuspect: num(stats.runnerSuspect),
+    lastHour: { jobs: num(stats.lastHour?.jobs), p50: num(stats.lastHour?.p50), p90: num(stats.lastHour?.p90) },
+    hours: hoursBody(stats.hours), stale,
   };
 }
 
@@ -76,6 +85,13 @@ const widthClass = (value, target) => {
   return `w${Math.min(100, Math.round((value / target) * 100 / WIDTH_STEP) * WIDTH_STEP)}`;
 };
 
+/** Bar heights are classes too: an hour's p90 against three times the target, in tenths; h0 is the stub of an empty hour. */
+const HEIGHT_STEPS = 10;
+const heightClass = (p90, target, jobs) => {
+  if (!jobs || !Number.isFinite(p90) || !Number.isFinite(target) || target <= 0) return 'h0';
+  return `h${Math.max(1, Math.min(HEIGHT_STEPS, Math.ceil((p90 / (3 * target)) * HEIGHT_STEPS)))}`;
+};
+
 const CSS = `
 :root{--bg:#f6f7f9;--card:#ffffff;--ink:#14171c;--mute:#5d6572;--line:#e1e5ea;--ok:#1a8f4a;--ok-bg:#e4f5ea;--warn:#a86a00;--warn-bg:#fff2d6;--bad:#b3261e;--bad-bg:#fde7e5;--off:#6b7280;--off-bg:#eceef1;--track:#e9ecf0;--accent:#2457d6}
 @media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--ink:#e8ebf0;--mute:#9aa3b0;--line:#262c36;--ok:#4cc27a;--ok-bg:#12301e;--warn:#e0a63a;--warn-bg:#352a10;--bad:#f07a73;--bad-bg:#3a1a18;--off:#9aa3b0;--off-bg:#232833;--track:#232833;--accent:#7ea2ff}}
@@ -97,6 +113,9 @@ h1{margin:0;font-size:28px;letter-spacing:-.01em}h1 small{font-weight:500;color:
 .meter{height:6px;border-radius:3px;background:var(--track);margin-top:14px;overflow:hidden}
 .meter span{display:block;height:100%;border-radius:3px;background:var(--ok)}.meter.over span{background:var(--bad)}
 ${Array.from({ length: 100 / WIDTH_STEP + 1 }, (_, i) => `.w${i * WIDTH_STEP}{width:${i * WIDTH_STEP}%}`).join('')}
+.hours{display:flex;align-items:flex-end;gap:3px;height:72px;margin:12px 0 4px;border-bottom:1px solid var(--line)}
+.bar{flex:1;min-width:4px;border-radius:2px 2px 0 0;background:var(--ok)}.bar.warn{background:var(--warn)}.bar.over{background:var(--bad)}.bar.none{background:var(--track)}
+${Array.from({ length: HEIGHT_STEPS + 1 }, (_, i) => `.h${i}{height:${i === 0 ? 4 : i * 10}%}`).join('')}
 section{margin:28px 0 0}section h2{font-size:18px;margin:0 0 8px}section p{margin:0 0 10px;color:var(--mute);max-width:72ch}
 pre{margin:0;padding:12px 14px;border-radius:10px;background:var(--card);border:1px solid var(--line);overflow-x:auto;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
 a{color:var(--accent)}footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--mute);font-size:14px}
@@ -135,6 +154,23 @@ const when = (iso, now) => {
   return { stamp, age: m === 0 ? 'just now' : m === 1 ? '1 minute ago' : m < 120 ? `${m} minutes ago` : `${Math.floor(m / 60)} hours ago` };
 };
 
+/** One bar per hour bucket, oldest first; the title carries the hour's numbers, the classes its height and tone. */
+function hourBars(hours, targetMs) {
+  if (!hours?.length) return '';
+  const bars = hours.map((h) => {
+    const t = Date.parse(h.from ?? '');
+    const label = Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)}Z` : 'unknown hour';
+    const n = Number.isFinite(h.jobs) ? h.jobs : 0;
+    const tone = !n || !Number.isFinite(h.p90) ? 'none' : !Number.isFinite(targetMs) || h.p90 < targetMs ? 'ok' : h.p90 < 3 * targetMs ? 'warn' : 'over';
+    const title = n ? `${label}: ${grouped(n)} ${n === 1 ? 'job' : 'jobs'}, p50 ${fmtWait(h.p50)}, p90 ${fmtWait(h.p90)}` : `${label}: no jobs`;
+    return `<span class="bar ${tone} ${heightClass(h.p90, targetMs, n)}" title="${esc(title)}"></span>`;
+  }).join('');
+  return `<section><h2>The day by hour</h2>
+<p>One bar per hour of the window, oldest on the left. A bar's height is that hour's p90 against three times the target, and its colour says whether the hour beat the target, came within three times it, or did not. A day's p90 is often one hour's burst; this shows which.</p>
+<div class="hours">${bars}</div>
+</section>`;
+}
+
 function waitCard(title, ms, targetMs) {
   const over = Number.isFinite(ms) && Number.isFinite(targetMs) && ms >= targetMs;
   const target = Number.isFinite(targetMs) ? `target under ${esc(fmtWait(targetMs))}` : 'no target set';
@@ -154,6 +190,7 @@ export function pageHtml(body, now = Date.now()) {
     waitCard('Queue wait, median', body?.queueWaitMs.p50, body?.targets.p50Ms),
     waitCard('Queue wait, p90', body?.queueWaitMs.p90, body?.targets.p90Ms),
     `<div class="card"><h2>Jobs in the window</h2><div class="num">${count(body?.jobs)}</div><p class="sub">${count(body?.finished)} finished, ${count(body?.runnerSuspect)} failed with the runner suspected</p></div>`,
+    `<div class="card"><h2>Last hour</h2><div class="num">${Number.isFinite(body?.lastHour?.p50) ? esc(fmtWait(body.lastHour.p50)) : '&ndash;'}</div><p class="sub">median; p90 ${Number.isFinite(body?.lastHour?.p90) ? esc(fmtWait(body.lastHour.p90)) : '&ndash;'}, ${count(body?.lastHour?.jobs)} jobs</p></div>`,
   ].join('');
   return `<!doctype html>
 <html lang="en">
@@ -171,8 +208,9 @@ export function pageHtml(body, now = Date.now()) {
 <p class="lead">Every GitHub Actions job that lands on a pitlane runner is measured from the moment it queues to the moment it runs. These are the last ${windowText} across every repository the runners serve, rewritten every minute.</p>
 ${notice}
 <div class="grid">${cards}</div>
+${hourBars(body?.hours, body?.targets.p90Ms)}
 <section><h2>What the numbers mean</h2>
-<p>The queue wait is the time between GitHub creating a job and a runner starting it: the whole of the wait a developer sees before their logs begin. The median is the typical job; p90 is the slow tail, the wait nine jobs in ten beat. The targets are the ones the runners are tuned to, and the badge turns from green to grey the moment the supervisor stops writing.</p>
+<p>The queue wait is the time between GitHub creating a job and a runner starting it: the whole of the wait a developer sees before their logs begin. The median is the typical job; p90 is the slow tail, the wait nine jobs in ten beat. The targets are the ones the runners are tuned to, and the badge turns from green to grey the moment the supervisor stops writing. The verdict and the badge read the whole day; the last hour and the bars say whether the day's tail is still here.</p>
 <p>A job the runner itself is suspected of failing counts as runner-suspected; the rest of the failures belong to the code under test.</p>
 </section>
 <section><h2>Put it on a README</h2>
