@@ -44,7 +44,13 @@ Every pull request must pass these checks to merge:
 
 OpenSSF Scorecard also runs on the repository.
 
-CI runs on GitHub-hosted runners only: a pull request from a fork never reaches a self-hosted row.
+Redline, an automated reviewer, also reads each pull request once it is out of draft. It reports as
+the `review / redline` check and posts its verdict as a review from `sprayberry-redline`. A pull
+request that changes `.github/workflows/` is reviewed by a run of the default branch's workflow
+files, never its own, so a change to CI cannot shape its own review.
+
+The tests and CodeQL run on GitHub-hosted runners. Redline runs on a self-hosted row and only reads
+the pull request; a pull request from a fork never runs its own code on a self-hosted row.
 
 ## Conventions
 
