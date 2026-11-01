@@ -1,0 +1,58 @@
+# Redline, the gating code review, as this repository's CI check. The review itself lives in
+# askalf/ci (redline-review.yml): read-only tools, verdict pass or fail. On pull_request it reviews
+# same-repository pull requests that are not drafts. It can also be dispatched on the default branch
+# for a head the pull_request run cannot vouch for (a PR that changes CI, a re-read after a
+# description edit); that run executes the default branch's workflow files, not the PR's, and
+# reviews the head it is given.
+name: Redline
+# The dispatcher finds its run by this title; keep it exact.
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Redline review {0}#{1} @ {2}{3}', github.repository, inputs.pr, inputs.head, inputs.reread && ' (re-read)' || '') || github.event.pull_request.title }}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number.
+        required: true
+        type: string
+      head:
+        description: The full commit sha to review. The run fails if the PR is not at it.
+        required: true
+        type: string
+      reread:
+        description: Review the head again even when a Redline verdict already stands there.
+        required: false
+        default: false
+        type: boolean
+
+# actions: read is for the called review's fork-dispatch check, which reads this repository's
+# pull_request runs and jobs; the called workflow cannot hold more than is granted here.
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+# On pull_request the newest push wins. A dispatch gets a group of its own per head and mode, and
+# is never cancelled: a group holds one pending run and a newer one cancels it, and a cancelled
+# dispatch leaves no verdict to read. One dispatch is sent per head and mode at a time.
+concurrency:
+  group: redline-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr }}${{ inputs.head && format('-{0}-{1}', inputs.head, inputs.reread) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    # Same-repository PRs only, and not drafts: gated here as well as in the called workflow, so a
+    # fork's code never reaches the self-hosted runner even if the callee changes. A dispatch is
+    # checked by the called workflow (open, not a draft, head in this repository) before anything
+    # is fetched.
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)
+    # Pinned so a change to the review workflow reaches this repository only through a reviewed bump here.
+    uses: askalf/ci/.github/workflows/redline-review.yml@5305beec29bdd65ff79d5b431d8c3a25fe945bb1 # main, askalf/ci#141
+    with:
+      redline-ref: 5305beec29bdd65ff79d5b431d8c3a25fe945bb1
+      runner-label: redline
+      pr: ${{ inputs.pr }}
+      head: ${{ inputs.head }}
+      reread: ${{ inputs.reread == true }}
