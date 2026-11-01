@@ -1,0 +1,45 @@
+[Unit]
+Description=Serve pitlane's public 24 h numbers and badge on loopback for the tunnel (pitlane-public)
+Documentation=file:///opt/askalf/pitlane-public.mjs
+After=network-online.target pitlane-supervisor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A throwaway account that can write nothing: it reads the files the supervisor writes and answers on loopback.
+DynamicUser=yes
+ExecStart=/usr/bin/node /opt/askalf/pitlane-public.mjs
+# The supervisor makes the directory on its first tick; made here as well so the bind below has a source on a fresh boot.
+ExecStartPre=+/usr/bin/mkdir -p /run/askalf/pitlane/public
+# Everything else under /run/askalf (waits by repository, the dispatcher's state, job records) is hidden behind an empty tmpfs.
+TemporaryFileSystem=/run/askalf:ro
+BindReadOnlyPaths=/run/askalf/pitlane/public
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# cloudflared reaches it on 127.0.0.1; nothing else may connect, and it connects to nothing.
+IPAddressAllow=localhost
+IPAddressDeny=any
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

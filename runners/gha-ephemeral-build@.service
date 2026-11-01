@@ -1,0 +1,73 @@
+[Unit]
+Description=GitHub Actions ephemeral runner %i (askalf first-party repositories, build tier: deploys as root)
+Documentation=file:///opt/askalf/gha-ephemeral-run.sh
+# The jobs on this tier run docker compose against the live stack, so the daemon is up first.
+After=network-online.target docker.service
+Wants=network-online.target
+# The same start budget as the first-party template: an ephemeral runner exits after every job
+# and is started again, so each job is a start. See gha-ephemeral-first-party@.service.
+StartLimitIntervalSec=600
+StartLimitBurst=60
+
+[Service]
+Type=simple
+# Root on purpose (docs/ops-tier.md): every deploy on this host runs docker compose against
+# the stack directory under /root, writes /opt/askalf and /etc/systemd/system and calls systemctl, and a non-root
+# account in the docker group is root-equivalent, so a user here would be a drop in name only.
+# What this template changes against the adopted root runners is everything around the job: one
+# JIT registration per job, the instance directory reset every cycle, the pinned runner version,
+# a start limit and a restart policy, and a row the supervisor and the host's runner watchdog can read.
+User=root
+Group=root
+Slice=gha-build.slice
+WorkingDirectory=/srv/gha/%i
+# The mint step is shared with every other tier. For a root row the run step is root too, so the
+# sticky-directory and rename protections in it protect nothing extra; the script stays shared.
+# The mint step is the condition to start (ExecCondition=, not ExecStartPre=): an exit of 1 to 254 ends
+# the start with the unit inactive, not failed, and Restart= does not apply (a pool row with nothing
+# queued, exit 75); a failure exits 255, the unit fails, and Restart=always starts it again.
+ExecCondition=+/opt/askalf/gha-ephemeral-mint.sh %i
+# The mint step may wait up to six minutes for GitHub to release a busy registration of this
+# name (a cancelled job's runner); the 90 s default would kill that wait and count a failure.
+TimeoutStartSec=8min
+ExecStart=/opt/askalf/gha-ephemeral-run.sh %i
+# One job per process: when the job ends the runner exits and the next cycle starts.
+Restart=always
+RestartSec=1
+# The runner shuts down cleanly on SIGINT; the whole job cgroup goes with it.
+KillSignal=SIGINT
+# A stop that reaches the mint step (ExecCondition=) kills it with that SIGINT, and a control process
+# killed by a signal counts as a failure unless the signal is listed here: the unit ended failed, not
+# inactive, after a park sent during a long mint. The runner
+# itself (the main process) already ends cleanly on SIGINT.
+SuccessExitStatus=SIGINT
+# A deploy interrupted mid-compose is the hazard with any runner. The ephemeral cycle ends a unit
+# only when its job ends and apply --restart-idle never restarts a busy row, so a stop reaches a
+# running job only from an explicit systemctl stop, and then it must outlast the longest deploy:
+# the longest deploy workflow allows 60 minutes (build, a migration rehearsal, the migrations, a smoke pass).
+TimeoutStopSec=65min
+# The runner's own scripts (run-helper.sh, config.sh) refuse to start as root unless told so.
+Environment=RUNNER_ALLOW_RUNASROOT=1
+# HOME stays root's: the deploys read the stack directory under /root and root's docker and gh configuration, as
+# they did on the adopted runners. The runner's own state lives in the instance directory.
+Environment=HOME=/root
+Environment=RUNNER_TOOL_CACHE=/var/lib/gha/toolcache-build
+Environment=AGENT_TOOLSDIRECTORY=/var/lib/gha/toolcache-build
+# The build guard's settings (runners/examples/pitlane-build.env): PITLANE_BUILD_BOOTSTRAP, the host
+# deploy that runs without the allow list. The file is optional: without it every job needs the list.
+EnvironmentFile=-/etc/askalf/pitlane-build.env
+UMask=0022
+
+# Hardening: only what a root deploy tolerates. No ProtectSystem, no NoNewPrivileges, no
+# capability bound, no PrivateDevices: the job writes /opt/askalf and /etc/systemd, reloads units
+# and talks to the docker socket. PrivateTmp holds: nothing a deploy does needs another unit's /tmp.
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

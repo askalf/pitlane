@@ -1,0 +1,9 @@
+[Unit]
+Description=GitHub Actions runners: build tier (builds and deploys of your own stack, as root)
+# Child of gha.slice by name. These run as root with the docker socket because they
+# build and deploy our own stack (see README: non-root plus docker group is not a
+# privilege drop). The slice bounds what a build can take from the host.
+
+[Slice]
+CPUQuota=500%
+MemoryMax=6G

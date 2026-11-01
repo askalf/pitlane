@@ -1,0 +1,8 @@
+# An example build allow list (docs/ops-tier.md, Build guard), read from /etc/askalf/runners.build-allow
+# (PITLANE_BUILD_ALLOW). The build rows run as root, so pitlane-build-guard.sh stops any job before
+# its first step unless this list names its repository, branch and workflow file, and only push,
+# schedule and workflow_dispatch jobs run there at all. One `<owner/repo> <branch> <file>` per line;
+# # starts a comment. A workflow moving to a build label needs its line here, deployed, before its
+# first job there.
+example/app main deploy.yml
+example/app main nightly-backup.yml

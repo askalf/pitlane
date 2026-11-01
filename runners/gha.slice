@@ -1,0 +1,15 @@
+[Unit]
+Description=GitHub Actions runners (the CI budget of this host)
+Documentation=file:///opt/askalf/gha-runners-apply.sh
+# The host also runs its own services. Every runner unit lives under this slice, so CI as a
+# whole can never take more than 7 cores or 10G, whatever a test suite or build decides to do.
+# CI gets the cores the services leave idle; under contention CPUWeight=50 against
+# system.slice's default 100 keeps the services ahead, and the last core is never CI's.
+
+[Slice]
+CPUQuota=700%
+CPUWeight=50
+MemoryHigh=9G
+MemoryMax=10G
+TasksMax=4096
+IOWeight=50

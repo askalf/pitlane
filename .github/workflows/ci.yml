@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    # A public repository takes pull requests from forks, so its CI runs on GitHub's runners only:
+    # no job of this repository ever reaches a self-hosted row.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: askalf/ci/actions/checkout-with-retry@5305beec29bdd65ff79d5b431d8c3a25fe945bb1 # main, askalf/ci#141
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Unit tests
+        run: node --test runners/*.test.mjs canary/*.test.mjs box-ci/*.test.mjs
+
+      - name: Shell scripts parse
+        run: |
+          for f in runners/*.sh canary/*.sh box-ci/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      - name: Example config is consistent
+        run: node runners/runner-config.mjs

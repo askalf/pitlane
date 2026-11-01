@@ -1,0 +1,75 @@
+[Unit]
+Description=GitHub Actions ephemeral runner %i (sprayberry-code org pool, upstream write tier)
+Documentation=file:///opt/askalf/gha-ephemeral-run.sh
+After=network-online.target
+Wants=network-online.target
+# An ephemeral runner exits after every job and is started again, so each job is a start. A job
+# cycle (registration, the job, teardown) takes 15s or more, so a runner cycling through short jobs
+# makes at most about 40 starts in ten minutes; a limit of 20 would stop a runner for good
+# (start-limit-hit) after a burst of quick jobs. 60 still stops a unit that fails at once on every
+# start; the mint and run scripts sleep 30s before exiting on a failure, so a bad token or an
+# unreachable GitHub does not spin either way.
+StartLimitIntervalSec=600
+StartLimitBurst=60
+
+[Service]
+Type=simple
+User=gha-oss-write
+Group=gha-oss-write
+Slice=gha-read.slice
+WorkingDirectory=/srv/gha/%i
+# The mint step runs as root ("+"), outside the sandbox below: it is the only reader of
+# the org token (root:root 600) and leaves a single-use JIT config for the run step.
+# The mint step is the condition to start (ExecCondition=, not ExecStartPre=): an exit of 1 to 254 ends
+# the start with the unit inactive, not failed, and Restart= does not apply (a pool row with nothing
+# queued, exit 75); a failure exits 255, the unit fails, and Restart=always starts it again.
+ExecCondition=+/opt/askalf/gha-ephemeral-mint.sh %i
+# The mint step may wait up to six minutes for GitHub to release a busy registration of this
+# name (a cancelled job's runner); the 90 s default would kill that wait and count a failure.
+TimeoutStartSec=8min
+ExecStart=/opt/askalf/gha-ephemeral-run.sh %i
+# One job per process: when the job ends the runner exits and the next cycle starts.
+Restart=always
+# The next registration starts at once: a job's own exit is the normal cycle, and the scripts
+# already wait 30s before exiting on a failure. 10s here was half of a 13s status job's cycle.
+RestartSec=1
+KillSignal=SIGINT
+# A stop that reaches the mint step (ExecCondition=) kills it with that SIGINT, and a control process
+# killed by a signal counts as a failure unless the signal is listed here: the unit ended failed, not
+# inactive, after a park sent during a long mint. The runner
+# itself (the main process) already ends cleanly on SIGINT.
+SuccessExitStatus=SIGINT
+TimeoutStopSec=5min
+Environment=HOME=/srv/gha/%i
+# Its own tool cache: nothing another tier's job cached is ever loaded here.
+Environment=RUNNER_TOOL_CACHE=/var/lib/gha/toolcache-write
+Environment=AGENT_TOOLSDIRECTORY=/var/lib/gha/toolcache-write
+UMask=0022
+
+# Upstream write tier: runs only the OSS lane's upstream-write.yml (a ping, a close, a
+# released round, a submission) and the post job of redline-candidate.yml (a candidate's verdict),
+# never a repository's code. Same sandbox as the read tier; the difference is the account, the one
+# allowed to read /etc/askalf/oss-write.env (the token that writes to upstream repositories), and the
+# runner group: the mint step registers this account's rows only in the group its row names, which
+# admits those two workflows on main, never the Default group.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/gha/%i /var/lib/gha/toolcache-write
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

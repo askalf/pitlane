@@ -1,0 +1,5 @@
+# Pinned actions/runner release for the managed (ephemeral) pools. Adopted runners keep
+# their own self-updating install; only /opt/actions-runner/<version> is built from this.
+# Format: <version> <sha256 of actions-runner-linux-x64-<version>.tar.gz>
+# Source of the sha: the release notes at https://github.com/actions/runner/releases/tag/v<version>
+2.337.0 70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613

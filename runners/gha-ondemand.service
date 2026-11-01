@@ -1,0 +1,26 @@
+[Unit]
+Description=Start the repository runners when a job waits for one, stop them when idle (gha-ondemand)
+Documentation=file:///opt/askalf/gha-ondemand.mjs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root: it starts and stops the runner units, and reads the host's GitHub token file.
+ExecStart=/usr/bin/node /opt/askalf/gha-ondemand.mjs
+# MODE=on to act (the default, dry, only logs), and optionally POLL_SEC, IDLE_MIN, WARM, EXEC_CAP, POOL_MAX.
+# HOOK_SECRET (and HOOK_PORT) turn on the loopback webhook that cuts the poll wait short.
+EnvironmentFile=-/etc/askalf/gha-ondemand.env
+# dispatcher.json, dispatcher.beat and waits.jsonl are 0640 to this group (gid 1001, the dashboard's), and no other account reads them (docs/isolation.md, Host state files).
+Environment=PITLANE_READ_GID=1001
+Restart=always
+RestartSec=30
+# The runners it stops are not its own processes; stopping this leaves them as they are.
+KillMode=process
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

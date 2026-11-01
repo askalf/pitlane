@@ -1,0 +1,40 @@
+# box-ci: runs pull_request and push workflows on this host with act, without GitHub's Actions
+# scheduler, and posts each job as a commit status. See /opt/askalf/box-ci.mjs.
+#
+# Root, because it reads the root-only token and drops to the run account (config `runAs`,
+# gha-exec) for every act process. The jobs share gha-exec.slice's CPU and memory budget with the
+# exec runners, so the two together cannot starve the host's services.
+#
+# Deployed, not self-enabled: the operator creates /etc/askalf/box-ci.json and
+# /etc/askalf/box-ci.token, then runs `systemctl enable --now box-ci`.
+[Unit]
+Description=box-ci: run pull_request and push workflows with act, report commit statuses
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/askalf/box-ci.json
+ConditionPathExists=/etc/askalf/box-ci.token
+
+[Service]
+Type=simple
+# Each act process runs in a transient box-ci-*.scope beside this service in the slice, not inside
+# its cgroup, so stopping or crashing box-ci leaves them running: they are killed before it starts
+# and after it stops. The "-" lets a sweep that finds nothing pass.
+ExecStartPre=-/usr/bin/systemctl kill --signal=SIGKILL box-ci-*.scope
+ExecStart=/usr/bin/node /opt/askalf/box-ci.mjs
+ExecStopPost=-/usr/bin/systemctl kill --signal=SIGKILL box-ci-*.scope
+Environment=BOX_CI_CONFIG=/etc/askalf/box-ci.json
+Environment=BOX_CI_TOKEN_FILE=/etc/askalf/box-ci.token
+Environment=BOX_CI_HOME=/var/lib/box-ci
+StateDirectory=box-ci
+StateDirectoryMode=0711
+Slice=gha-exec.slice
+Nice=10
+Restart=on-failure
+RestartSec=30
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

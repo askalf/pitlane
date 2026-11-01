@@ -1,0 +1,16 @@
+{
+  "runAs": "gha-exec",
+  "concurrency": 1,
+  "pollSeconds": 30,
+  "jobTimeoutMinutes": 30,
+  "contextPrefix": "box/",
+  "repos": [
+    {
+      "repo": "askalf/shop",
+      "events": ["pull_request", "push"],
+      "branches": ["main"],
+      "workflows": ["box-unit.yml", "box-e2e.yml"],
+      "serial": true
+    }
+  ]
+}

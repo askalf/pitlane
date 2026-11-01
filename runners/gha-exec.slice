@@ -1,0 +1,16 @@
+[Unit]
+Description=GitHub Actions runners: exec tier (runs repo code: OSS candidates, test suites)
+# Child of gha.slice by name. Upstream test suites are the least predictable load
+# on the host, so this tier gets its own ceiling inside the CI budget.
+# This tier carries first-party builds and CodeQL as well as the OSS lane's test suites.
+# gha.slice's 10G still caps CI as a whole.
+# 700% CPU: a lower ceiling starves first-party CI (two tsc builds fill 400%) while the host
+# sits idle. gha.slice's 700% and weight are the real bound.
+
+# 8G: a fan-out of eight rows holds page cache and builds at once, and a 6G cap kept
+# the tier at its ceiling. CPU stays at 7 cores because the last core is the host's.
+
+[Slice]
+CPUQuota=700%
+MemoryMax=8G
+TasksMax=2048

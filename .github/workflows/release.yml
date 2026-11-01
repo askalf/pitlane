@@ -1,0 +1,64 @@
+name: release
+
+# Signs each release. When a release is published, the source tarball of its tagged commit is built
+# with git archive, attested keyless through GitHub OIDC (Sigstore), and uploaded to the release with
+# its bundle. Verify a download with:
+#   gh attestation verify pitlane-<version>.tar.gz --owner askalf
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # upload the release assets
+      id-token: write # keyless Sigstore signing
+      attestations: write # keep the attestation in GitHub's store
+    steps:
+      - uses: askalf/ci/actions/checkout-with-retry@5305beec29bdd65ff79d5b431d8c3a25fe945bb1 # main, askalf/ci#141
+        with:
+          persist-credentials: false
+
+      - name: Build the source tarball
+        id: pack
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "not a version tag: $TAG"; exit 1 ;;
+          esac
+          # The tarball must be the tagged commit, the one the release names.
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || { echo "checkout is not $GITHUB_SHA"; exit 1; }
+          v="${TAG#v}"
+          git archive --format=tar.gz --prefix="pitlane-$v/" -o "pitlane-$v.tar.gz" HEAD
+          sha256sum "pitlane-$v.tar.gz"
+          echo "tarball=pitlane-$v.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the tarball (keyless Sigstore)
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.pack.outputs.tarball }}
+
+      - name: Upload the tarball and its provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE" "$TARBALL.sigstore.json"
+          # Scorecard credits provenance only to *.intoto.jsonl assets: one DSSE envelope per line,
+          # taken from the Sigstore bundle.
+          jq -ec '.dsseEnvelope' "$BUNDLE" > "$TARBALL.intoto.jsonl"
+          gh release upload "$TAG" --clobber -R "$GITHUB_REPOSITORY" \
+            "$TARBALL" "$TARBALL.sigstore.json" "$TARBALL.intoto.jsonl"

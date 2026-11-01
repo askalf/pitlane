@@ -1,0 +1,6 @@
+# Host files this canary's own rows (pitlane-exec-*) are expected to be able to read, one path per
+# line. They run no fix lane and no review lane, so the list is empty: any /etc/askalf file the probe
+# can read is a finding. The fix lane's rows (<repo>-fix-e1, group gha-fix) read
+# /etc/askalf/fix-exec.env and fix-prompt.md, and the review lane's rows (<repo>-review-e1, group
+# gha-review) reads review-lane.env; this file is not theirs. The Redline probe reads
+# canary/expected-readable-redline.txt instead.

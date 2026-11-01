@@ -1,0 +1,8 @@
+[Unit]
+Description=GitHub Actions runners: read tier (Redline and other review seats)
+# Child of gha.slice by name. These runners read code and post reviews; the model
+# call is remote, so their footprint is a checkout and a node process per job.
+
+[Slice]
+CPUQuota=300%
+MemoryMax=3G

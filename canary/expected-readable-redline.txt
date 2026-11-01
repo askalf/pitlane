@@ -1,0 +1,6 @@
+# Host files the Redline probe (isolation-canary.yml probe-redline, on pitlane-redline-e1) is expected
+# to be able to read, one path per line. A Redline row is gx-<row> with gha-redline as its one group,
+# which opens these two files (root:gha-redline 0640) and nothing else: any other /etc/askalf file the
+# probe can read, a stale copy of one of these among them, is a finding.
+/etc/askalf/redline.env
+/etc/askalf/redline-prompt.md

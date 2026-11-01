@@ -1,0 +1,31 @@
+# An example manifest: one row per runner registration (docs/pools.md, docs/ops-tier.md).
+# gha-runners-apply.sh reads it from /etc/askalf/gha-runners.manifest (GHA_MANIFEST) and reconciles
+# the host against it: systemd slices, per-unit drop-ins and, for a new row, its directory and
+# registration. runner-config.mjs checks this file and the four beside it together.
+#
+# Columns (whitespace-separated, no spaces inside a value):
+#   name    the runner name as registered on GitHub, and the instance of its unit
+#   scope   repo:<owner>/<repo>, org:<org> (an organization's runners), or pool:<owner> (a shared row
+#           that registers, at each start, for the repository of the job routed to it: docs/pools.md)
+#   tier    read  = reads code and posts reviews; never executes repository code
+#           exec  = executes repository code (test suites, builds)
+#           build = builds and deploys your own stack as root, behind the build guard (docs/ops-tier.md)
+#   user    the account the row runs as, which picks its unit template:
+#             gha-exec       exec,  your own repositories
+#             gha-oss        exec,  code you did not write (forks, candidates)
+#             gha-oss-read   read,  reads code you did not write
+#             gha-oss-write  read,  pushes to forks with a key no other row holds
+#             gha-redline    read,  the review gate
+#             root           build, the only tier that may run as root
+#   dir     the runner directory
+#   labels  runner labels; the first three are the implicit self-hosted,Linux,X64
+#   mode    ephemeral = one job per registration, JIT-configured at each start (the normal mode)
+#           adopt     = an existing runner: apply only assigns its slice, never re-registers it
+app-exec-e1      repo:example/app    exec   gha-exec     /srv/gha/app-exec-e1      self-hosted,Linux,X64,app-exec   ephemeral
+app-exec-e2      repo:example/app    exec   gha-exec     /srv/gha/app-exec-e2      self-hosted,Linux,X64,app-exec   ephemeral
+pool-e1          pool:example        exec   gha-exec     /srv/gha/pool-e1          self-hosted,Linux,X64,pool       ephemeral
+pool-e2          pool:example        exec   gha-exec     /srv/gha/pool-e2          self-hosted,Linux,X64,pool       ephemeral
+oss-1            org:example-forks   exec   gha-oss      /srv/gha/oss-1            self-hosted,Linux,X64,oss        ephemeral
+oss-read-1       org:example-forks   read   gha-oss-read /srv/gha/oss-read-1       self-hosted,Linux,X64,oss-read   ephemeral
+app-redline-e1   repo:example/app    read   gha-redline  /srv/gha/app-redline-e1   self-hosted,Linux,X64,redline    ephemeral
+app-build-e1     repo:example/app    build  root         /srv/gha/app-build-e1     self-hosted,Linux,X64,app-build  ephemeral

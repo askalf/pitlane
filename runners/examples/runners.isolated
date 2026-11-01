@@ -1,0 +1,15 @@
+# An example isolation list (docs/isolation.md), read from /etc/askalf/runners.isolated (GHA_ISOLATED).
+# Each listed row runs as its own account, gx-<row>, with its own tool cache. One row per line, then:
+#   groups=<g>|none   the row's supplementary group. A lane's rows keep the group of their tier account,
+#                     which alone reads that lane's key files; a row that reads no key file has none.
+#                     The tier group of gha-exec opens every unisolated exec row's directory, so no
+#                     listed exec row keeps it.
+#   account=gx-<n>    the account where gx-<row> would be over useradd's 32 characters.
+# A build row runs as root and cannot be listed (apply holds it).
+app-exec-e1      groups=none
+app-exec-e2      groups=none
+pool-e1          groups=none
+pool-e2          groups=none
+oss-1            groups=gha-oss
+oss-read-1       groups=gha-oss-read
+app-redline-e1   groups=gha-redline

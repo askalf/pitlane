@@ -1,0 +1,8 @@
+# An example list of retired rows (docs/pools.md, Retiring a row). One row per line:
+#   name      the row, as it was registered on GitHub and named its unit
+#   retired   the day it left the manifest (YYYY-MM-DD)
+#   why       free text to the end of the line
+# A row here is in none of runners.manifest, runners.cpu and runners.isolated. gha-runners-apply.sh
+# never removes a unit, so the host keeps a retired row's unit, drop-ins, directory, tool cache and
+# gx- account until a cleanup reads this file and removes exactly those.
+app-exec-e3      2026-01-15  folded into the pool: the repository's jobs start on pool rows as fast

@@ -1,0 +1,29 @@
+[Unit]
+Description=Watch the runner rows, report what is wrong, heal what the allow-list permits (pitlane-supervisor)
+Documentation=file:///opt/askalf/pitlane-supervisor.mjs
+After=network-online.target gha-ondemand.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root: it reads other units cgroups and the host's GitHub token file. It changes nothing: phase 1 has no heals.
+ExecStart=/usr/bin/node /opt/askalf/pitlane-supervisor.mjs
+# PITLANE_MODE=heal in this file turns the heals on (runners/pitlane-supervisor-heal.mjs); absent, it observes.
+EnvironmentFile=-/etc/askalf/pitlane-supervisor.env
+RuntimeDirectory=askalf/pitlane
+# 0711: a job opens jobs/<row> and public/ by name and lists nothing. status.json and metrics.prom are
+# 0640 to PITLANE_READ_GID (gid 1001, the dashboard's), which reads them
+# through a read-only bind; no other account can (docs/isolation.md, Host state files).
+RuntimeDirectoryMode=0711
+Environment=PITLANE_READ_GID=1001
+RuntimeDirectoryPreserve=yes
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run/askalf/pitlane
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

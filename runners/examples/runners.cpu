@@ -1,0 +1,13 @@
+# An example CPU shape (docs/cpu.md), read from /etc/askalf/runners.cpu (GHA_CPU). One row per line:
+# the row name, then options.
+#   cpus=N     pin the row to N CPUs (CPUAffinity=), so test runners and compilers size their worker
+#              pools from N and not from the whole host. Windows rotate by the row's position among
+#              the cpus= lines, so list a repository's rows together and add new ones at the end.
+#   weight=W   CPUWeight= (1 to 10000, systemd default 100) against the other rows of the same slice.
+# Every exec row has a line. A row not listed runs on every CPU at the default weight. After a change
+# run `gha-runners-apply.sh apply --restart-idle`.
+app-exec-e1  cpus=4
+app-exec-e2  cpus=4
+pool-e1      cpus=4
+pool-e2      cpus=4
+oss-1        cpus=2 weight=50
