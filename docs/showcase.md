@@ -48,10 +48,11 @@ host's tunnel (cloudflared) publishes that as `https://pitlane.askalf.org`.
 ```
 
 `finished` counts the jobs that finished in the window and `runnerSuspect` the ones the outcome record
-(`docs/outcomes.md`) suspects the runner of. `lastHour` is the same median and p90 over the hour just
-ended, and `hours` the window as 24 hour buckets, oldest first (`hourly`): a day's p90 is often one
-hour's burst, and the page draws the buckets as bars so a reader sees which hour, and whether the tail
-is still here. In a README:
+(`docs/outcomes.md`) suspects the runner of. `lastHour` is the same median and p90 over the trailing hour (a
+record may be stamped up to a minute ahead of now, the same clock-skew allowance the totals take), and
+`hours` the window as 24 hour buckets, oldest first (`hourly`), the newest ending where the totals end: a
+day's p90 is often one hour's burst, and the page draws the buckets as bars so a reader sees which hour,
+and whether the tail is still here. In a README:
 
 ```md
 [![CI on pitlane](https://img.shields.io/endpoint?url=https%3A%2F%2Fpitlane.askalf.org%2Fbadge.json)](https://pitlane.askalf.org/)
