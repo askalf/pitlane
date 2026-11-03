@@ -80,13 +80,19 @@ read -r _ scope _ user dir labels _ <<<"$row"
 # the host's runner watchdog and the supervisor from starting it again, and exits PARK_EXIT, which under
 # ExecCondition= leaves the unit inactive with no restart (the header). The entry's repository
 # must be the pool owner's: the file is root's, written by the dispatcher from a verified delivery,
-# and this is the check that says so.
+# and this is the check that says so. One queue serves every owner's pool, so a row reads an
+# entry's owner before it claims it and leaves another owner's entry where it is, for that owner's
+# pool (the dispatcher removes an entry it no longer routes). The check after the claim stays: an
+# entry that changed owner in between is put back, never dropped.
 QUEUE="${GHA_POOL_QUEUE:-/run/askalf/pitlane/pool-queue}"
 PARK_DIR="${GHA_PARK_DIR:-/run/askalf/gha-ondemand}"
 POOL_LINGER_SECS="${POOL_LINGER_SECS:-20}"
 pool_claim_one() {  # sets target and labels from the oldest entry (GitHub's job ids increase); 1 when there is none
   local f t l
   for f in $(ls "$QUEUE" 2>/dev/null | grep -E '^[0-9]+$' | sort -n); do
+    t=""
+    read -r t _ < "$QUEUE/$f" 2>/dev/null || true
+    case "${t#repo:}" in "$owner"/*) ;; *) continue ;; esac   # gone, or another owner's: not this row's to take
     rm -f -- "$QUEUE/.$NAME"
     mv -n -- "$QUEUE/$f" "$QUEUE/.$NAME" 2>/dev/null || continue   # gone: another row took it
     [ -f "$QUEUE/.$NAME" ] || continue
@@ -96,7 +102,10 @@ pool_claim_one() {  # sets target and labels from the oldest entry (GitHub's job
     if ! [[ "$t" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$ ]] || [ "${t#*/}" = . ] || [ "${t#*/}" = .. ] || ! [[ "${l:-}" =~ ^[A-Za-z0-9._,-]+$ ]]; then
       log "pool: entry $f is malformed; dropped"; rm -f -- "$QUEUE/.$NAME"; continue
     fi
-    case "$t" in "$owner"/*) ;; *) log "pool: entry $f names $t, not a repository of $owner; dropped"; rm -f -- "$QUEUE/.$NAME"; continue ;; esac
+    case "$t" in "$owner"/*) ;; *)
+      log "pool: entry $f names $t, not a repository of $owner; put back for its own pool"
+      mv -n -- "$QUEUE/.$NAME" "$QUEUE/$f" 2>/dev/null || rm -f -- "$QUEUE/.$NAME"; continue ;;
+    esac
     target=$t; labels=$l
     log "pool: claimed job $f for $target (labels $labels)"
     return 0

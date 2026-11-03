@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { POOL_IDLE_MS, RateFloorError, appToken, claimOf, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
+import { POOL_IDLE_MS, RateFloorError, appToken, claimOf, fileToken, tokensByOwner, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
 
 test('the state document: every row with its unit reading and what the tick did to it, each queued job and where it went, the knobs, the budget, the events; and it serialises', () => {
   const state = {
@@ -381,6 +381,64 @@ test('a running idle pool row claimed for the repository, or minting with no cla
   assert.deepEqual(r.start, []);
   r = plan(POOLED, { 'ci-exec-e1': busy, 'pool-e1': idlePool('askalf/dario') }, [ciJob], { now: 0, idleMs: 10 * MIN });
   assert.deepEqual(r.start, ['pool-e2']);
+});
+
+test('no owner is built in: rows of any owner the manifest names are managed, and a pool serves its own owner\'s repositories only', () => {
+  const two = managedRows(`
+app-exec-e1 repo:example/app exec gha-exec /srv/gha/app-exec-e1 self-hosted,Linux,X64,app-exec ephemeral
+ex-pool-e1 pool:example exec gha-exec /srv/gha/ex-pool-e1 self-hosted,Linux,X64,pool ephemeral
+ci-exec-e1 repo:askalf/ci exec gha-exec /srv/gha/ci-exec-e1 self-hosted,Linux,X64,ci-exec ephemeral
+al-pool-e1 pool:askalf exec gha-exec /srv/gha/al-pool-e1 self-hosted,Linux,X64,pool ephemeral
+bad-1 repo:example exec gha-exec /srv/gha/bad-1 self-hosted,x ephemeral
+bad-2 pool:example/app exec gha-exec /srv/gha/bad-2 self-hosted,x ephemeral
+`);
+  assert.deepEqual(two.map((r) => [r.name, r.repo, r.pool]), [
+    ['app-exec-e1', 'example/app', null],
+    ['ex-pool-e1', null, 'example'],
+    ['ci-exec-e1', 'askalf/ci', null],
+    ['al-pool-e1', null, 'askalf'],
+  ], 'a scope of neither shape (repo: with no repository, pool: with one) is still skipped');
+  const appJob = { id: 201, repo: 'example/app', labels: ['self-hosted', 'Linux', 'X64', 'app-exec'] };
+  assert.deepEqual(plan(two, {}, [appJob], { now: 0, idleMs: 10 * MIN }).start, ['app-exec-e1']);
+  // Its repository's row busy: the job goes to its own owner's pool, never to another owner's.
+  let r = plan(two, { 'app-exec-e1': busy }, [appJob], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual([r.start, r.queue], [['ex-pool-e1'], [appJob]]);
+  r = plan(two, { 'ci-exec-e1': busy }, [ciJob], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual([r.start, r.queue], [['al-pool-e1'], [ciJob]]);
+  r = plan(two, { 'app-exec-e1': busy, 'ex-pool-e1': busy }, [appJob], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual(r.start, [], 'its own pool busy: the other owner\'s idle pool row is not started for it');
+  // An owner whose name another owner's starts with is not that owner.
+  const near = { id: 202, repo: 'example-two/app', labels: ['self-hosted', 'Linux', 'X64', 'app-exec'] };
+  assert.deepEqual(plan(two, {}, [near], { now: 0, idleMs: 10 * MIN }), { start: [], park: [], room: [], held: 0, queue: [] });
+});
+
+test('an App-only host: no token file is no token, and the App\'s token serves every owner it is installed on', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'token-file-'));
+  assert.equal(fileToken(join(d, 'absent.env')), '', 'a missing file is no token, not a failed tick');
+  writeFileSync(join(d, 'a.env'), 'OTHER=1\nGITHUB_TOKEN="ghp_fake"\n');
+  assert.equal(fileToken(join(d, 'a.env')), 'ghp_fake');
+  writeFileSync(join(d, 'b.env'), '# empty\n');
+  assert.equal(fileToken(join(d, 'b.env')), '');
+  assert.throws(() => fileToken(d), 'a path that is there but not readable as a file is still an error');
+  const app = async (owner) => (owner === 'your-org' ? 'ghs_app' : '');
+  const toks = await tokensByOwner(['your-org/your-repo', 'other/x'], fileToken(join(d, 'absent.env')), app);
+  assert.deepEqual(toks.get('your-org'), { tok: 'ghs_app', source: 'app' });
+  assert.deepEqual(toks.get('other'), { tok: '', source: 'GITHUB_TOKEN' }, 'an owner with neither has an empty token, which the tick names');
+});
+
+test('the shipped examples are managed as they stand: their owners are stand-ins, and nothing in them needs editing for the dispatcher', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  assert.deepEqual(managedRows(read('./examples/minimal/runners.manifest')).map((r) => [r.name, r.repo]), [['app-exec-e1', 'your-org/your-repo']]);
+  const full = read('./examples/runners.manifest');
+  assert.deepEqual(managedRows(full).map((r) => [r.name, r.repo ?? `pool:${r.pool}`]), [
+    ['app-exec-e1', 'example/app'],
+    ['app-exec-e2', 'example/app'],
+    ['pool-e1', 'pool:example'],
+    ['pool-e2', 'pool:example'],
+    ['app-redline-e1', 'example/app'],
+    ['app-build-e1', 'example/app'],
+  ]);
+  assert.deepEqual(watchedRows(full).map((r) => r.name), ['oss-1', 'oss-read-1']);
 });
 
 test('a job of a repository the pool does not serve is not queued for it', () => {

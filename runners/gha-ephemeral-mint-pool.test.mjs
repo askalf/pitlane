@@ -24,9 +24,9 @@ const PIECES = [
 ].join('\n');
 
 /** Runs `call` with the pool functions, QUEUE at `dir`, as row `name`; returns stdout lines, the exit code, and the queue directory's files. */
-function claim(dir, name, call = 'pool_claim_one', { linger = 0 } = {}) {
+function claim(dir, name, call = 'pool_claim_one', { linger = 0, owner = 'askalf' } = {}) {
   const posix = dir.replace(/\\/g, '/');
-  const driver = `${PIECES}\nQUEUE='${posix}'; NAME='${name}'; owner=askalf; POOL_LINGER_SECS=${linger}; target=; labels=\nrc=0; ${call} || rc=$?\necho "rc=$rc target=$target labels=$labels"\n`;
+  const driver = `${PIECES}\nQUEUE='${posix}'; NAME='${name}'; owner=${owner}; POOL_LINGER_SECS=${linger}; target=; labels=\nrc=0; ${call} || rc=$?\necho "rc=$rc target=$target labels=$labels"\n`;
   const r = spawnSync('bash', ['-c', driver], { encoding: 'utf8' });
   return { out: r.stdout.trim().split('\n'), code: r.status, files: readdirSync(dir).sort(), err: r.stderr };
 }
@@ -68,19 +68,36 @@ test('a second row claims the next entry, not the first row\'s; a row claiming a
   assert.equal(readFileSync(join(dir, '.pool-e1'), 'utf8'), 'repo:askalf/dario self-hosted,dario-exec\n');
 });
 
-test('a malformed entry, or one naming another owner\'s repository, is dropped and the next is taken; names that are not job ids are not entries', () => {
+test('a malformed entry of this owner is dropped and the next is taken; another owner\'s entry is left in place; names that are not job ids are not entries', () => {
   const dir = queue({ 100: 'repo:askalf/ci\n', 101: 'repo:evil/x self-hosted\n', 102: 'repo:askalf/../x self-hosted\n', 103: 'repo:askalf/.. self-hosted\n', 104: 'repo:askalf/ci self-hosted,ci-exec\n' });
   writeFileSync(join(dir, 'README'), 'not an entry\n');
   const r = claim(dir, 'pool-e1');
   assert.deepEqual(r.out, [
     'pool: entry 100 is malformed; dropped',
-    'pool: entry 101 names evil/x, not a repository of askalf; dropped',
     'pool: entry 102 is malformed; dropped',
     'pool: entry 103 is malformed; dropped',
     'pool: claimed job 104 for askalf/ci (labels self-hosted,ci-exec)',
     'rc=0 target=askalf/ci labels=self-hosted,ci-exec',
   ]);
-  assert.deepEqual(r.files, ['.pool-e1', 'README']);
+  assert.deepEqual(r.files, ['.pool-e1', '101', 'README'], 'evil/x stays queued for a pool of its own owner');
+});
+
+test('two owners\' pools on one queue: neither takes nor drops the other\'s job, and each takes its own', () => {
+  // The oldest entry is the other owner's: before, the example pool claimed it, saw the owner and deleted it.
+  const dir = queue({ 200: 'repo:askalf/ci self-hosted,ci-exec\n', 201: 'repo:example/app self-hosted,app-exec\n' });
+  const ex = claim(dir, 'ex-pool-e1', 'pool_claim_one', { owner: 'example' });
+  assert.deepEqual(ex.out, ['pool: claimed job 201 for example/app (labels self-hosted,app-exec)', 'rc=0 target=example/app labels=self-hosted,app-exec']);
+  assert.deepEqual(ex.files, ['.ex-pool-e1', '200'], 'askalf\'s job is still queued');
+  const al = claim(dir, 'pool-e1');
+  assert.deepEqual(al.out, ['pool: claimed job 200 for askalf/ci (labels self-hosted,ci-exec)', 'rc=0 target=askalf/ci labels=self-hosted,ci-exec']);
+  assert.deepEqual(al.files, ['.ex-pool-e1', '.pool-e1']);
+  // A pool with only the other owner's entries queued claims nothing and leaves them.
+  const only = queue({ 300: 'repo:askalf/ci self-hosted,ci-exec\n' });
+  const none = claim(only, 'ex-pool-e1', 'pool_claim_one', { owner: 'example' });
+  assert.deepEqual([none.out, none.files], [['rc=1 target= labels='], ['300']]);
+  // An owner whose name another's starts with is not that owner.
+  const near = queue({ 400: 'repo:example-two/app self-hosted,app-exec\n' });
+  assert.deepEqual(claim(near, 'ex-pool-e1', 'pool_claim_one', { owner: 'example' }).files, ['400']);
 });
 
 /** Run pool_release against a stub gh (listing answers `listed` ids for the name) and no App; returns the log and what gh saw. */

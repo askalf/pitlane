@@ -30,6 +30,7 @@ as the way runners come to exist.
 | `pitlane-build.env` | `/etc/askalf/` | the build guard's settings, which `gha-ephemeral-build@.service` reads: `PITLANE_BUILD_BOOTSTRAP`, the host deploy that runs without the list (`examples/pitlane-build.env`; root, 0640) |
 | `pitlane-public.mjs`, `pitlane-public.service` | `/opt/askalf/`, `/etc/systemd/system/` | serves the supervisor's 24 h numbers as a page, as JSON and as the badge on `127.0.0.1:7312` for the tunnel (`docs/showcase.md`) |
 | `gha-runners-apply.sh` | `/opt/askalf/` | `plan`, `apply`, `bootstrap`, `upgrade`, `register`, `status` |
+| `install.sh` | run from the checkout | puts every file of this table on a new host from a config directory (`install --config DIR`), after `check`ing the prerequisites; writes `gha-ondemand.env` and `pitlane-supervisor.env` once (dry, observe-only) and starts nothing. Its file list is held to this directory by `install.test.mjs` |
 
 All of them ship through the host deploy (the host-scripts manifest), and a drift check files a ticket
 when the host stops matching.

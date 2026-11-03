@@ -90,35 +90,44 @@ they are your own deploys, or on a hosted runner.
 
 ## Install
 
-Installation is manual today; an installer is planned. You need:
+You need:
 
-- a Linux host with systemd and cgroup v2 (Ubuntu 24.04 is the tested system), root, bash, Node.js 22
-  and the GitHub CLI (`gh`);
+- a Linux x86_64 host with systemd and cgroup v2 (Ubuntu 24.04 is the tested system), root, bash,
+  Node.js 22 at `/usr/bin/node`, the GitHub CLI (`gh`), and curl, jq and openssl;
 - a GitHub App (or a fine-grained token) for each repository or organization it serves;
 - for the fast start, GitHub's `workflow_job` webhook delivered to the dispatcher's loopback port
-  (7311 by default) through a tunnel or reverse proxy, with its secret in the dispatcher's environment.
+  (7311 by default) through a tunnel or reverse proxy.
 
-Then:
+`runners/install.sh check` says which of these the host has. Then:
 
-1. Start from [docs/example-minimal.md](docs/example-minimal.md) (one repository, one row) or the
-   fuller set in [runners/examples/](runners/examples/), and check it as one set:
+1. Copy [runners/examples/minimal/](runners/examples/minimal/) (one repository, one row,
+   [docs/example-minimal.md](docs/example-minimal.md)) or the fuller
+   [runners/examples/](runners/examples/) to a directory of your own, and put your repositories in it.
+
+2. Install it. The installer checks the prerequisites, checks your config as one set (a config with a
+   problem installs nothing), lays out the code, the units and the config at the paths
+   [runners/README.md](runners/README.md) lists, and writes the dispatcher's settings once, in dry
+   mode with a fresh webhook secret. It starts nothing.
 
    ```
-   node runners/runner-config.mjs path/to/your/config
+   sudo runners/install.sh install --config path/to/your/config
    ```
 
-2. Copy the files to the paths [runners/README.md](runners/README.md) lists, then:
+3. It ends by printing the rest: GitHub access for each owner, then
 
    ```
-   gha-runners-apply.sh plan                  # what would change
-   gha-runners-apply.sh bootstrap             # accounts, directories, the pinned runner
-   gha-runners-apply.sh apply --restart-idle
-   systemctl enable --now gha-ondemand.service
+   /opt/askalf/gha-runners-apply.sh bootstrap     # accounts, directories, the pinned runner
+   /opt/askalf/gha-runners-apply.sh apply --restart-idle
+   systemctl enable --now gha-ondemand.service pitlane-supervisor.service
    ```
 
-One limit to know before you start: the scale-to-zero dispatcher (`runners/gha-ondemand.mjs`)
-currently manages only rows whose scope is under the `askalf` owner. Making the owner a setting is
-the next change; until then a fork changes that one check.
+   then the webhook, and `MODE=on` once the dispatcher's journal shows the starts you expect.
+
+To upgrade, pull and run `sudo runners/install.sh install` again: without `--config` it replaces
+the code and units and keeps the config and settings on the host.
+
+The scale-to-zero dispatcher (`runners/gha-ondemand.mjs`) manages the rows of every owner the
+manifest names (`repo:<owner>/<repo>` and `pool:<owner>` scopes); no owner is built into the code.
 
 ## How it compares
 
