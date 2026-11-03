@@ -10,8 +10,19 @@
   Run, Stable, how it is measured, and the method.
 - [docs/method.md](docs/method.md) says where every published number comes from and how to check it.
 
+### Install
+
+- `runners/install.sh`: `check` reports the prerequisites; `install --config DIR` checks the
+  config as one set, lays out the code, the units and the config at the paths the units name, and
+  writes the dispatcher's and the supervisor's settings once (dry mode, a fresh webhook secret,
+  observe-only), starting nothing. Without `--config` it upgrades the code and units in place.
+
 ### Runners
 
+- The dispatcher and the supervisor manage the rows of any owner the manifest names
+  (`repo:<owner>/<repo>`, `pool:<owner>`); before, only the `askalf` owner's rows were managed and
+  any other was skipped without a word. `gha-runners-apply.sh status` reads the token file
+  `GHA_TOKEN_ENV` names, as the dispatcher and the supervisor do.
 - The mint step keeps a digest of the previous job's worker log before each cycle's reset, so the
   time between a job's last step and the runner reporting it done can be attributed
   ([docs/run-time.md](docs/run-time.md)).
@@ -23,7 +34,7 @@
 ### Docs
 
 - The README states exactly what is isolated and what is not, which modes keep state between jobs,
-  that build rows run as root, that exec rows have no docker socket, and that installation is manual.
+  that build rows run as root, and that exec rows have no docker socket.
 - A minimal one-repository example ([docs/example-minimal.md](docs/example-minimal.md)), a docs
   index with a glossary ([docs/README.md](docs/README.md)), and a comparison with other self-hosted
   runner designs.

@@ -86,6 +86,19 @@ test('the isolated list ignores comments and blanks; stat output reads as group 
   assert.equal(parseShow('User=gx-a\nActiveState=active\n').user, 'gx-a');
 });
 
+test('the supervisor watches the rows of any owner the manifest names: no owner is built in', () => {
+  const m = [
+    'app-exec-e1 repo:example/app exec gha-exec /srv/gha/app-exec-e1 app-exec ephemeral',
+    'pool-e1     pool:example     exec gha-exec /srv/gha/pool-e1     pool     ephemeral',
+    'minimal-e1  repo:your-org/your-repo exec gha-exec /srv/gha/minimal-e1 app-exec ephemeral',
+  ].join('\n');
+  assert.deepEqual(supervisedRows(m).map((r) => [r.name, r.repo, r.pool]), [
+    ['app-exec-e1', 'example/app', null],
+    ['pool-e1', 'pool:example', 'example'],
+    ['minimal-e1', 'your-org/your-repo', null],
+  ]);
+});
+
 test('the supervised rows are every ephemeral row, org pool included, never an adopt row', () => {
   const m = [
     '# name scope tier user dir labels mode',

@@ -2,8 +2,8 @@
 // gha-ondemand: runs the ephemeral first-party runners only while there is work for them.
 //
 // Idle runner listeners each hold memory for as long as they run. This dispatcher
-// keeps each repository-scoped ephemeral row (manifest mode `ephemeral`, scope repo:askalf/*)
-// stopped while nothing waits for it, and starts it when a job does:
+// keeps each repository-scoped ephemeral row (manifest mode `ephemeral`, scope repo:<owner>/<repo>,
+// any owner the manifest names) stopped while nothing waits for it, and starts it when a job does:
 //   - every POLL_SEC it lists each repository's queued and in-progress workflow runs and their
 //     queued jobs (conditional requests: an unchanged list costs no rate limit), a few repositories
 //     at a time; a repository whose listing fails neither starts nor parks a row that tick, and
@@ -71,10 +71,15 @@ export function unitFor(user, name) {
   return `gha-ephemeral@${name}.service`;
 }
 
+/** The scope shapes runner-config.mjs accepts, for any owner: repo:<owner>/<repo> and pool:<owner>. */
+export const REPO_SCOPE = /^repo:([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)$/;
+export const POOL_SCOPE = /^pool:([A-Za-z0-9-]+)$/;
+
 /**
- * The manifest rows this dispatcher manages: ephemeral, scoped to one askalf repository (`repo`), or
- * to the pool of askalf's repositories (`pool`, with `repo` null: its labels come from the job it
- * claims). Pure, exported for tests.
+ * The manifest rows this dispatcher manages: ephemeral, scoped to one repository (`repo`), or to the
+ * pool of one owner's repositories (`pool`, with `repo` null: its labels come from the job it
+ * claims). The owners are the ones the manifest names: none is built in, so a host that serves
+ * another account or organization changes nothing here. Pure, exported for tests.
  */
 export function managedRows(manifestText) {
   const rows = [];
@@ -83,8 +88,8 @@ export function managedRows(manifestText) {
     const f = line.trim().split(/\s+/);
     if (f.length !== 7 || f[6] !== 'ephemeral') continue;
     const [name, scope, tier, user, , labels] = f;
-    const m = /^repo:(askalf\/[A-Za-z0-9._-]+)$/.exec(scope);
-    const p = /^pool:(askalf)$/.exec(scope);
+    const m = REPO_SCOPE.exec(scope);
+    const p = POOL_SCOPE.exec(scope);
     if (!m && !p) continue;
     rows.push({ name, repo: m ? m[1] : null, pool: p ? p[1] : null, tier, user, unit: unitFor(user, name), labels: labels.split(',').map((l) => l.toLowerCase()) });
   }

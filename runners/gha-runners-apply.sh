@@ -649,7 +649,8 @@ register() {
 # ── status ──────────────────────────────────────────────────────────────────
 status() {
   local tok="${GH_TOKEN:-}" unit ustate b gstate target
-  [ -n "$tok" ] || tok="$(grep -m1 '^GITHUB_TOKEN=' /root/.askalf/.env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
+  # GHA_TOKEN_ENV: the token file the dispatcher and the supervisor read (their default too).
+  [ -n "$tok" ] || tok="$(grep -m1 '^GITHUB_TOKEN=' "${GHA_TOKEN_ENV:-/root/.askalf/.env}" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
   printf '%-32s %-32s %-9s %-5s %s\n' NAME SCOPE UNIT BUSY GITHUB
   while read -r name scope tier user dir labels rmode; do
     unit=$(unit_for "$name" "$scope" "$rmode" "$user")

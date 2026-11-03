@@ -108,7 +108,8 @@ export function supervisedRows(manifestText) {
     const f = line.trim().split(/\s+/);
     if (f.length !== 7 || f[6] !== 'ephemeral') continue;
     const [name, scope, , user, , labels] = f;
-    const m = /^(repo:(askalf\/[A-Za-z0-9._-]+)|org:([A-Za-z0-9-]+)|pool:(askalf))$/.exec(scope);
+    // Any owner the manifest names, in the scope shapes runner-config.mjs accepts.
+    const m = /^(repo:([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)|org:([A-Za-z0-9-]+)|pool:([A-Za-z0-9-]+))$/.exec(scope);
     if (!m) continue;
     rows.push({ name, repo: m[2] ?? (m[3] ? `org:${m[3]}` : `pool:${m[4]}`), pool: m[4] ?? null, user, unit: unitFor(user, name), labels: labels.split(',').map((l) => l.toLowerCase()) });
   }

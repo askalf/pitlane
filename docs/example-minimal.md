@@ -39,11 +39,16 @@ jobs:
 
 Exec rows have no docker socket, so a job with `container:` or `services:` does not run there.
 
-## Before you rely on it
+## Scale to zero
 
-The scale-to-zero dispatcher (`runners/gha-ondemand.mjs`) currently manages only rows whose scope is
-under the `askalf` owner. With another owner, start the row's unit yourself
-(`systemctl start gha-ephemeral-first-party@app-exec-e1`): it then stays up, registering again after
-each job, instead of scaling to zero. Making the owner a setting is the next change.
+The dispatcher (`runners/gha-ondemand.mjs`) manages every ephemeral `repo:` and `pool:` row the
+manifest names, whatever the owner, so this row needs nothing more: it stays stopped until a job asks
+for `app-exec`, and parks again after `IDLE_MIN` minutes (10 by default) with nothing to take. The
+dispatcher lists `your-org/your-repo`'s queued jobs with the runner App's token for `your-org`, or,
+without the App, with `GITHUB_TOKEN` from the token file `GHA_TOKEN_ENV` names.
 
-The rest of the install, the accounts, the App and the webhook, is in the README's Install section.
+## Install it
+
+Copy this directory to one of your own, put your repository in `runners.manifest`, and run
+`sudo runners/install.sh install --config <that directory>`. The rest (GitHub access, the accounts,
+the webhook) is printed when it finishes, and in the README's Install section.
