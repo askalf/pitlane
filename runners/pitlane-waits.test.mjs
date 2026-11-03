@@ -153,8 +153,23 @@ const stats = (waits, outcomes) => publicStats(waits, outcomes, AT);
 
 test('publicStats keeps the 24 h totals and nothing that names a repository or a row', () => {
   const s = stats({ n: 1240, p50: 2049, p90: 16000, max: 90000 }, { n: 1300, classes: { success: 1300 }, suspect: { n: 0, rate: 0, runners: { r1: 0 } } });
-  assert.deepEqual(s, { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 1240, queueWaitMs: { p50: 2049, p90: 16000 }, targets: TARGETS, finished: 1300, runnerSuspect: 0 });
-  assert.deepEqual(stats(undefined, undefined), { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 0, queueWaitMs: { p50: null, p90: null }, targets: TARGETS, finished: null, runnerSuspect: null });
+  assert.deepEqual(s, { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 1240, queueWaitMs: { p50: 2049, p90: 16000 }, targets: TARGETS, finished: 1300, runnerSuspect: 0, ran: null, runMs: { p50: null, p90: null }, feltMs: { p50: null, p90: null } });
+  assert.deepEqual(stats(undefined, undefined), { at: '2026-10-30T23:00:00.000Z', window: '24h', jobs: 0, queueWaitMs: { p50: null, p90: null }, targets: TARGETS, finished: null, runnerSuspect: null, ran: null, runMs: { p50: null, p90: null }, feltMs: { p50: null, p90: null } });
+});
+
+test('publicStats carries run and felt time from the outcome record, and every key a reader had before', () => {
+  const out = { n: 1300, classes: { success: 1300 }, suspect: { n: 2, rate: 2 / 1300, runners: { r1: 2 } }, runMs: { n: 1290, p50: 18000, p90: 74000 }, waitMs: { n: 1290, p50: 2000, p90: 28000 }, feltMs: { n: 1290, p50: 28000, p90: 102000 } };
+  const s = stats({ n: 1240, p50: 2049, p90: 16000, max: 90000 }, out);
+  assert.equal(s.ran, 1290);
+  assert.deepEqual(s.runMs, { p50: 18000, p90: 74000 });
+  assert.deepEqual(s.feltMs, { p50: 28000, p90: 102000 });
+  // The keys the profile's board and the run-page line read keep their names and shapes.
+  for (const k of ['at', 'window', 'jobs', 'queueWaitMs', 'targets', 'finished', 'runnerSuspect']) assert.ok(k in s, k);
+  assert.deepEqual(s.queueWaitMs, { p50: 2049, p90: 16000 });
+  assert.equal(s.runnerSuspect, 2);
+  // An outcome summary from before felt time existed still gives run time, and null for felt.
+  const old = stats({ n: 1, p50: 1000, p90: 1000 }, { n: 1, suspect: { n: 0 }, runMs: { n: 1, p50: 5000, p90: 5000 } });
+  assert.deepEqual([old.runMs.p50, old.feltMs.p50], [5000, null]);
 });
 
 test('hourly splits the day into hour buckets ending now, oldest first; publicStats carries the hour and the buckets with no repository name', () => {
@@ -184,9 +199,15 @@ test('hourly splits the day into hour buckets ending now, oldest first; publicSt
   assert.equal('lastHour' in publicStats({ n: 1, p50: 1, p90: 1 }, null, now), false);
 });
 
-test('badgeDoc shows the p50, colored by the targets', () => {
-  const badge = (p50, p90, n = 10) => badgeDoc(stats({ n, p50, p90 }, null));
-  assert.deepEqual(badge(2049, 16000), { schemaVersion: 1, label: 'CI on pitlane', cacheSeconds: 300, message: 'starts in 2 s (p50)', color: 'brightgreen' });
+test('badgeDoc is CI measured: the median start and the median run, colored by the start targets', () => {
+  const badge = (p50, p90, n = 10, run = 18200) => badgeDoc(stats({ n, p50, p90 }, { n, suspect: { n: 0 }, runMs: { n, p50: run, p90: run } }));
+  assert.deepEqual(badge(2049, 16000), { schemaVersion: 1, label: 'CI measured', cacheSeconds: 300, message: 'start 2 s · run 18 s', color: 'brightgreen' });
+  assert.equal(badge(400, 900).message, 'start under 1 s · run 18 s');
+  assert.equal(badge(2049, 16000, 10, 125000).message, 'start 2 s · run 2 min 5 s');
+  // No run number yet (no finished jobs, or an older outcome summary): the start alone.
+  assert.equal(badgeDoc(stats({ n: 10, p50: 2049, p90: 16000 }, null)).message, 'start 2 s');
+  // The colour reads the start only: a long run does not turn a fast start yellow.
+  assert.equal(badge(2049, 16000, 10, 3600000).color, 'brightgreen');
   assert.equal(badge(3000, 40000).color, 'green');
   assert.equal(badge(9000, 40000).color, 'yellow');
   assert.equal(badge(20000, 60000).color, 'orange');
@@ -205,7 +226,7 @@ test('writePublic writes the three files whole, with no repository-shaped name i
   writePublic(dir, s);
   assert.deepEqual(readdirSync(dir).sort(), ['badge.json', 'stats.json', 'summary.txt']);
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'stats.json'), 'utf8')), s);
-  assert.equal(JSON.parse(readFileSync(join(dir, 'badge.json'), 'utf8')).message, 'starts in 2 s (p50)');
+  assert.equal(JSON.parse(readFileSync(join(dir, 'badge.json'), 'utf8')).message, 'start 2 s');
   assert.equal(readFileSync(join(dir, 'summary.txt'), 'utf8'), 'p50 2 s, p90 16 s across 1,240 jobs\n');
   for (const f of readdirSync(dir)) {
     assert.doesNotMatch(readFileSync(join(dir, f), 'utf8'), /\//, f);

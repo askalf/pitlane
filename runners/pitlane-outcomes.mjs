@@ -110,7 +110,11 @@ export function readOutcomes(dir, since, until = Date.now()) {
   return [...byId.values()].sort((a, b) => a.at - b.at);
 }
 
-/** Counts by class, the runner-suspect share, and run and wait percentiles, for the entries inside the window. */
+/**
+ * Counts by class, the runner-suspect share, and run, wait and felt percentiles, for the entries inside the
+ * window. Felt time is one job's wait plus its run, the time a developer waits from queued to done; only a job
+ * with both numbers counts toward it.
+ */
 export function summarizeOutcomes(entries, now, windowMs) {
   const inWin = entries.filter((e) => e.at > now - windowMs && e.at <= now + 60000);
   const classes = {};
@@ -126,5 +130,9 @@ export function summarizeOutcomes(entries, now, windowMs) {
     const v = inWin.map((e) => e[key]).filter(Number.isFinite).sort((a, b) => a - b);
     return { n: v.length, p50: percentile(v, 50), p90: percentile(v, 90) };
   };
-  return { n: inWin.length, classes, suspect: { n: suspect, rate: inWin.length ? suspect / inWin.length : null, runners }, runMs: pct('runMs'), waitMs: pct('waitMs') };
+  const felt = inWin.filter((e) => Number.isFinite(e.waitMs) && Number.isFinite(e.runMs)).map((e) => e.waitMs + e.runMs).sort((a, b) => a - b);
+  return {
+    n: inWin.length, classes, suspect: { n: suspect, rate: inWin.length ? suspect / inWin.length : null, runners },
+    runMs: pct('runMs'), waitMs: pct('waitMs'), feltMs: { n: felt.length, p50: percentile(felt, 50), p90: percentile(felt, 90) },
+  };
 }

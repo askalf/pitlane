@@ -43,7 +43,11 @@ every repository it manages:
 - an idle warm listener holds no slot until it takes a job. GitHub hands a job straight to
   a warm listener, so the warm exec rows can carry the count past the cap by at most their
   number;
-- org-scoped rows (OSS) and read and build tier rows are not counted.
+- org-scoped rows (OSS) and read and build tier rows are not counted. The fleet status job
+  (label `fleet-status`) runs on a read-tier row of its repository for that reason: it takes a few
+  seconds and reads only the API, and on an exec row each one held a slot a test job was waiting for.
+  Each such repository has two status rows, since a PR burst fires status jobs faster than one
+  ephemeral row takes them (a job plus its re-mint is about 18 s).
 
 Start at about one job per CPU of the slice. The queue-wait alert will fire during a
 burst that waits on the cap; read job duration next to it (`pitlane-outcomes`). `0` or

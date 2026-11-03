@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/askalf/pitlane/security/advisories/new
+    about: Privately, as SECURITY.md describes.
+  - name: How the numbers are measured
+    url: https://github.com/askalf/pitlane/blob/main/docs/method.md
+    about: Where every published number comes from.

@@ -1,0 +1,2 @@
+# Pin the row to 4 CPUs so test runners size their worker pools to that window (docs/cpu.md).
+app-exec-e1  cpus=4

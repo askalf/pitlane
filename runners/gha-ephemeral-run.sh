@@ -45,8 +45,18 @@ rm -f .jitconfig
 
 # The runner runs its job-completed hook as the job's last step and fails the job if the hook fails;
 # pitlane-job-summary.sh always exits 0. An absent or non-executable hook leaves the variable unset.
+# A row whose labels include one in PITLANE_SUMMARY_SKIP_LABELS (comma-separated, default
+# fleet-status) runs no hook: the hook is a step of its own, and its log and the summary line are two
+# more files the runner uploads before it reports the job done, one after another, each a round trip
+# to GitHub (docs/run-time.md). A fleet status job uploads five, so that is two of them, on the
+# fleet's most frequent job, whose run page nobody reads. Set the variable empty to give every row the hook.
 hook="${PITLANE_JOB_SUMMARY:-/opt/askalf/pitlane-job-summary.sh}"
-if [ -x "$hook" ] && [ ! -L "$hook" ]; then export ACTIONS_RUNNER_HOOK_JOB_COMPLETED="$hook"; else unset ACTIONS_RUNNER_HOOK_JOB_COMPLETED; fi
+skip=",${PITLANE_SUMMARY_SKIP_LABELS-fleet-status},"
+IFS=, read -r -a row_labels <<<"$labels"
+for l in "${row_labels[@]}"; do
+  case "$skip" in *",$l,"*) [ -z "$l" ] || hook="" ;; esac
+done
+if [ -n "$hook" ] && [ -x "$hook" ] && [ ! -L "$hook" ]; then export ACTIONS_RUNNER_HOOK_JOB_COMPLETED="$hook"; else unset ACTIONS_RUNNER_HOOK_JOB_COMPLETED; fi
 
 # A root row's job runs as root on the host, so its runner first runs pitlane-build-guard.sh as the
 # job-started hook, which stops the job unless runners.build-allow lists its workflow on that branch.

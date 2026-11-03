@@ -5,8 +5,9 @@
 // and nothing else, so a field added to those files stays on the box until it is added here too.
 //
 //   GET /             a page for people: the same numbers rendered, no script, no outside request
-//   GET /stats.json   the last 24 h: jobs, queue wait p50 and p90, targets, runner-caused failures;
-//                     the last hour beside them, and the day as 24 hour buckets
+//   GET /stats.json   the last 24 h: jobs, queue wait p50 and p90, targets, run and felt time p50
+//                     and p90, runner-caused failures; the last hour beside them, and the day as 24
+//                     hour buckets
 //   GET /badge.json   a shields.io endpoint badge
 //
 // Numbers the supervisor stopped rewriting are served with stale: true, turn the badge grey and put a
@@ -24,7 +25,7 @@ const log = (msg) => console.log(`pitlane-public: ${msg}`);
 /** Older than this, the numbers are a stopped supervisor's: it rewrites them every tick (60 s by default). */
 export const STALE_MS = 15 * 60_000;
 /** badgeDoc's label in pitlane-waits.mjs, for the badge served when its file is stale or missing. */
-const LABEL = 'CI on pitlane';
+const LABEL = 'CI measured';
 
 const HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -53,6 +54,9 @@ export function statsBody(stats, stale) {
     queueWaitMs: { p50: num(stats.queueWaitMs?.p50), p90: num(stats.queueWaitMs?.p90) },
     targets: { p50Ms: num(stats.targets?.p50Ms), p90Ms: num(stats.targets?.p90Ms) },
     finished: num(stats.finished), runnerSuspect: num(stats.runnerSuspect),
+    ran: num(stats.ran),
+    runMs: { p50: num(stats.runMs?.p50), p90: num(stats.runMs?.p90) },
+    feltMs: { p50: num(stats.feltMs?.p50), p90: num(stats.feltMs?.p90) },
     lastHour: { jobs: num(stats.lastHour?.jobs), p50: num(stats.lastHour?.p50), p90: num(stats.lastHour?.p90) },
     hours: hoursBody(stats.hours), stale,
   };
@@ -93,8 +97,8 @@ const heightClass = (p90, target, jobs) => {
 };
 
 const CSS = `
-:root{--bg:#f6f7f9;--card:#ffffff;--ink:#14171c;--mute:#5d6572;--line:#e1e5ea;--ok:#1a8f4a;--ok-bg:#e4f5ea;--warn:#a86a00;--warn-bg:#fff2d6;--bad:#b3261e;--bad-bg:#fde7e5;--off:#6b7280;--off-bg:#eceef1;--track:#e9ecf0;--accent:#2457d6}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--ink:#e8ebf0;--mute:#9aa3b0;--line:#262c36;--ok:#4cc27a;--ok-bg:#12301e;--warn:#e0a63a;--warn-bg:#352a10;--bad:#f07a73;--bad-bg:#3a1a18;--off:#9aa3b0;--off-bg:#232833;--track:#232833;--accent:#7ea2ff}}
+:root{--bg:#f6f7f9;--card:#ffffff;--ink:#14171c;--mute:#5d6572;--line:#e1e5ea;--ok:#1a8f4a;--ok-bg:#e4f5ea;--warn:#a86a00;--warn-bg:#fff2d6;--bad:#b3261e;--bad-bg:#fde7e5;--off:#6b7280;--off-bg:#eceef1;--track:#e9ecf0;--accent:#2457d6;--ok-ink:#157a3e;--warn-ink:#8a5700;--off-ink:#555c68}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--ink:#e8ebf0;--mute:#9aa3b0;--line:#262c36;--ok:#4cc27a;--ok-bg:#12301e;--warn:#e0a63a;--warn-bg:#352a10;--bad:#f07a73;--bad-bg:#3a1a18;--off:#9aa3b0;--off-bg:#232833;--track:#232833;--accent:#7ea2ff;--ok-ink:#4cc27a;--warn-ink:#e0a63a;--off-ink:#9aa3b0}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 main{max-width:960px;margin:0 auto;padding:40px 16px 56px}
@@ -102,9 +106,10 @@ header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bott
 h1{margin:0;font-size:28px;letter-spacing:-.01em}h1 small{font-weight:500;color:var(--mute);font-size:16px;letter-spacing:0;margin-left:10px}
 .lead{margin:0 0 24px;color:var(--mute);max-width:64ch}
 .pill{display:inline-block;padding:3px 12px;border-radius:999px;font-weight:600;font-size:14px;border:1px solid transparent}
-.pill.ok{color:var(--ok);background:var(--ok-bg)}.pill.warn{color:var(--warn);background:var(--warn-bg)}.pill.bad{color:var(--bad);background:var(--bad-bg)}.pill.off{color:var(--off);background:var(--off-bg)}
-.notice{margin:0 0 20px;padding:12px 16px;border-radius:10px;background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
-.notice.off{background:var(--off-bg);color:var(--off);border-color:var(--line)}
+.pill.ok{color:var(--ok-ink);background:var(--ok-bg)}.pill.warn{color:var(--warn-ink);background:var(--warn-bg)}.pill.bad{color:var(--bad);background:var(--bad-bg)}.pill.off{color:var(--off-ink);background:var(--off-bg)}
+.notice{margin:0 0 20px;padding:12px 16px;border-radius:10px;background:var(--warn-bg);color:var(--warn-ink);border:1px solid var(--warn)}
+.notice.off{background:var(--off-bg);color:var(--off-ink);border-color:var(--line)}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:0 0 24px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
 .card h2{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
@@ -122,8 +127,17 @@ a{color:var(--accent)}footer{margin-top:36px;padding-top:16px;border-top:1px sol
 footer p{margin:0 0 6px}code{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 `;
 const CSS_HASH = `'sha256-${createHash('sha256').update(CSS).digest('base64')}'`;
-/** The page runs no script and fetches nothing: its one style block is allowed by hash and every other source is denied. */
-export const CSP = `default-src 'none'; style-src ${CSS_HASH}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+/**
+ * The page runs no script and fetches nothing: its one style block is allowed by hash, its favicon is
+ * an inline data: image, and every other source is denied.
+ */
+export const CSP = `default-src 'none'; style-src ${CSS_HASH}; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+
+/** A green rounded square with a white p: small enough to inline, and needing no request. */
+const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23157a3e'/%3E%3Cpath d='M5 13V3h3.5a3 3 0 0 1 0 6H5' fill='none' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E";
+const SITE = 'https://pitlane.askalf.org/';
+const REPO = 'https://github.com/askalf/pitlane';
+const DESCRIPTION = 'pitlane, the lab where the ci-wizard method is proven: self-hosted GitHub Actions runners that publish their start and run times live, measured on every job.';
 
 const PAGE_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
@@ -157,24 +171,37 @@ const when = (iso, now) => {
 /** One bar per hour bucket, oldest first; the title carries the hour's numbers, the classes its height and tone. */
 function hourBars(hours, targetMs) {
   if (!hours?.length) return '';
+  const rows = [];
   const bars = hours.map((h) => {
     const t = Date.parse(h.from ?? '');
     const label = Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)}Z` : 'unknown hour';
     const n = Number.isFinite(h.jobs) ? h.jobs : 0;
     const tone = !n || !Number.isFinite(h.p90) ? 'none' : !Number.isFinite(targetMs) || h.p90 < targetMs ? 'ok' : h.p90 < 3 * targetMs ? 'warn' : 'over';
     const title = n ? `${label}: ${grouped(n)} ${n === 1 ? 'job' : 'jobs'}, p50 ${fmtWait(h.p50)}, p90 ${fmtWait(h.p90)}` : `${label}: no jobs`;
+    rows.push(`<tr><th scope="row">${esc(label)}</th><td>${grouped(n)}</td><td>${n ? esc(fmtWait(h.p50)) : ''}</td><td>${n ? esc(fmtWait(h.p90)) : ''}</td></tr>`);
     return `<span class="bar ${tone} ${heightClass(h.p90, targetMs, n)}" title="${esc(title)}"></span>`;
   }).join('');
-  return `<section><h2>The day by hour</h2>
-<p>One bar per hour of the window, oldest on the left. A bar's height is that hour's p90 against three times the target, and its colour says whether the hour beat the target, came within three times it, or did not. A day's p90 is often one hour's burst; this shows which.</p>
-<div class="hours">${bars}</div>
-</section>`;
+  return `<p>The day by hour: one bar per hour of the window, oldest on the left. A bar's height is that hour's p90 start against three times the target, and its colour says whether the hour beat the target, came within three times it, or did not. A day's p90 is often one hour's burst; this shows which.</p>
+<div class="hours" aria-hidden="true">${bars}</div>
+<table class="sr"><caption>Start by hour, oldest first</caption><thead><tr><th scope="col">Hour (UTC)</th><th scope="col">Jobs</th><th scope="col">Median start</th><th scope="col">p90 start</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
 }
 
 function waitCard(title, ms, targetMs) {
   const over = Number.isFinite(ms) && Number.isFinite(targetMs) && ms >= targetMs;
   const target = Number.isFinite(targetMs) ? `target under ${esc(fmtWait(targetMs))}` : 'no target set';
   return `<div class="card"><h2>${title}</h2><div class="num">${Number.isFinite(ms) ? esc(fmtWait(ms)) : '&ndash;'}</div><p class="sub">${target}</p><div class="meter${over ? ' over' : ''}"><span class="${widthClass(ms, targetMs)}"></span></div></div>`;
+}
+
+/** A card with one number and a line under it, for numbers that have no target (run time is the workload's). */
+function numCard(title, text, sub) {
+  return `<div class="card"><h2>${title}</h2><div class="num">${text}</div><p class="sub">${sub}</p></div>`;
+}
+
+/** Runner-suspected failures per 10,000 finished jobs, to one decimal; '' without finished jobs. */
+export function per10k(suspect, finished) {
+  if (!Number.isFinite(suspect) || !Number.isFinite(finished) || finished <= 0) return '';
+  const v = Math.round((suspect / finished) * 100_000) / 10;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
 /** The whole page for the published fields (statsBody's output, or null before the first tick). */
@@ -186,39 +213,66 @@ export function pageHtml(body, now = Date.now()) {
     : body.stale ? `<p class="notice">These numbers were written ${esc(stamp)} (${esc(age)}) and have not been rewritten since. The supervisor rewrites them every minute, so treat these as history, not the present.</p>`
       : '';
   const count = (n) => (Number.isFinite(n) ? grouped(n) : '&ndash;');
-  const cards = [
-    waitCard('Queue wait, median', body?.queueWaitMs.p50, body?.targets.p50Ms),
-    waitCard('Queue wait, p90', body?.queueWaitMs.p90, body?.targets.p90Ms),
-    `<div class="card"><h2>Jobs in the window</h2><div class="num">${count(body?.jobs)}</div><p class="sub">${count(body?.finished)} finished, ${count(body?.runnerSuspect)} failed with the runner suspected</p></div>`,
-    `<div class="card"><h2>Last hour</h2><div class="num">${Number.isFinite(body?.lastHour?.p50) ? esc(fmtWait(body.lastHour.p50)) : '&ndash;'}</div><p class="sub">median; p90 ${Number.isFinite(body?.lastHour?.p90) ? esc(fmtWait(body.lastHour.p90)) : '&ndash;'}, ${count(body?.lastHour?.jobs)} jobs</p></div>`,
+  const wait = (ms) => (Number.isFinite(ms) ? esc(fmtWait(ms)) : '&ndash;');
+  const startCards = [
+    waitCard('Start, median', body?.queueWaitMs.p50, body?.targets.p50Ms),
+    waitCard('Start, p90', body?.queueWaitMs.p90, body?.targets.p90Ms),
+    numCard('Jobs started', count(body?.jobs), 'in the window'),
+    numCard('Last hour', wait(body?.lastHour?.p50), `median start; p90 ${wait(body?.lastHour?.p90)}, ${count(body?.lastHour?.jobs)} jobs`),
   ].join('');
+  const runCards = [
+    numCard('Run, median', wait(body?.runMs?.p50), `p90 ${wait(body?.runMs?.p90)}, over ${count(body?.ran)} jobs that ran`),
+    numCard('Queued to done, median', wait(body?.feltMs?.p50), `p90 ${wait(body?.feltMs?.p90)}: the start and the run together`),
+  ].join('');
+  const rate = per10k(body?.runnerSuspect, body?.finished);
+  const stableCards = numCard('Runner-suspected failures', count(body?.runnerSuspect), rate ? `${esc(rate)} per 10,000 of ${count(body?.finished)} finished jobs` : `of ${count(body?.finished)} finished jobs`);
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<meta name="description" content="Live queue-wait numbers for pitlane, self-hosted GitHub Actions runners measured on every job from queued to running.">
-<title>CI on pitlane</title>
+<meta name="description" content="${DESCRIPTION}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="pitlane: CI measured">
+<meta property="og:description" content="${DESCRIPTION}">
+<meta property="og:url" content="${SITE}">
+<link rel="canonical" href="${SITE}">
+<link rel="icon" href="${FAVICON}">
+<title>pitlane: CI measured</title>
 <style>${CSS}</style>
 </head>
 <body>
 <main>
-<header><h1>pitlane<small>CI on self-hosted runners</small></h1><span class="pill ${v.cls}">${esc(v.text)}</span></header>
-<p class="lead">Every GitHub Actions job that lands on a pitlane runner is measured from the moment it queues to the moment it runs. These are the last ${windowText} across every repository the runners serve, rewritten every minute.</p>
+<header><h1>pitlane<small>the lab where ci-wizard's method is proven</small></h1><span class="pill ${v.cls}">${esc(v.text)}</span></header>
+<p class="lead">Self-hosted GitHub Actions runners that publish their start and run times live, measured on every job they take. This is where the <a href="https://github.com/askalf/ci-wizard" rel="noopener">ci-wizard</a> method runs on our own fleet first. The numbers are the last ${windowText} across every repository the runners serve, rewritten every minute.</p>
 ${notice}
-<div class="grid">${cards}</div>
+<section><h2>Start</h2>
+<div class="grid">${startCards}</div>
 ${hourBars(body?.hours, body?.targets.p90Ms)}
-<section><h2>What the numbers mean</h2>
-<p>The queue wait is the time between GitHub creating a job and a runner starting it: the whole of the wait a developer sees before their logs begin. The median is the typical job; p90 is the slow tail, the wait nine jobs in ten beat. The targets are the ones the runners are tuned to, and the badge turns from green to grey the moment the supervisor stops writing. The verdict and the badge read the whole day; the last hour and the bars say whether the day's tail is still here.</p>
-<p>A job the runner itself is suspected of failing counts as runner-suspected; the rest of the failures belong to the code under test.</p>
+</section>
+<section><h2>Run</h2>
+<div class="grid">${runCards}</div>
+</section>
+<section><h2>Stable</h2>
+<div class="grid">${stableCards}</div>
+</section>
+<section><h2>How it is measured</h2>
+<p><b>Start</b> is the queue wait: from GitHub creating a job to a runner starting it, the whole of the wait before a developer's logs begin. The median is the typical job; p90 is the slow tail, the wait nine jobs in ten beat. The targets are the ones the runners are tuned to; the verdict reads the whole day, and the last hour and the bars say whether the day's tail is still here.</p>
+<p><b>Run</b> is from a runner starting a job to GitHub recording it complete, for every finished job a runner took, whatever its result. It includes the runner's wrap-up after the last step, the time it takes to upload the job's logs and report it done. That wrap-up is measured on the host per job and is not broken out here yet. <b>Queued to done</b> is one job's start and run added together, the time a developer waits for a result.</p>
+<p><b>Stable</b> counts the jobs the runner itself is suspected of failing: a job that failed with no failing step, or one whose setup failed. The rest of the failures belong to the code under test.</p>
+<p>Start counts the jobs that started in the window and Run the jobs that finished in it, so the two job counts differ by the jobs still running at either edge.</p>
+</section>
+<section><h2>The method</h2>
+<p>Measure every job, find where the time goes, confirm the cause in the workflow file, then prove the fix by measuring the same way after. <a href="https://github.com/askalf/ci-wizard" rel="noopener">ci-wizard</a> runs that audit on any repository's GitHub Actions; this page is the same method on our own runners, live.</p>
 </section>
 <section><h2>Put it on a README</h2>
-<p>The badge is fetched live and never committed. It links back to this page.</p>
-<pre><code>[![CI on pitlane](https://img.shields.io/endpoint?url=https%3A%2F%2Fpitlane.askalf.org%2Fbadge.json)](https://pitlane.askalf.org/)</code></pre>
+<p>The badge is fetched live and never committed: the median start and the median run over the last day. It links back to this page.</p>
+<pre><code>[![CI measured](https://img.shields.io/endpoint?url=https%3A%2F%2Fpitlane.askalf.org%2Fbadge.json)](https://pitlane.askalf.org/)</code></pre>
 </section>
 <footer>
 <p>Updated ${esc(stamp)}${age ? ` (${esc(age)})` : ''}. Machine-readable: <a href="/stats.json">/stats.json</a> and <a href="/badge.json">/badge.json</a>.</p>
+<p>How each number is measured, and how to check it: <a href="${REPO}/blob/main/docs/method.md" rel="noopener">docs/method.md</a>. The runner code: <a href="${REPO}" rel="noopener">askalf/pitlane</a>.</p>
 <p>Published here: the totals above and nothing else. No answer names a repository, a runner or a single job. Built by <a href="https://github.com/askalf" rel="noopener">askalf</a>.</p>
 </footer>
 </main>

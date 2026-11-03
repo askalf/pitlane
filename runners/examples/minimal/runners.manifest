@@ -1,0 +1,3 @@
+# The smallest working set: one repository, one ephemeral exec row (docs/example-minimal.md).
+# Columns: name scope tier user dir labels mode (runners/examples/runners.manifest explains each).
+app-exec-e1  repo:your-org/your-repo  exec  gha-exec  /srv/gha/app-exec-e1  self-hosted,Linux,X64,app-exec  ephemeral

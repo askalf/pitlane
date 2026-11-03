@@ -1,7 +1,8 @@
 # Contributing to pitlane
 
-Thanks for your interest in improving **pitlane**, a self-hosted GitHub Actions runner stack built for
-start latency: ephemeral rows, scale to zero, isolation per row.
+Thanks for your interest in improving **pitlane**, the lab where the ci-wizard method is proven: a
+self-hosted GitHub Actions runner stack that measures every job it takes (ephemeral rows, scale to
+zero, isolation per row).
 
 ## Ground rules
 

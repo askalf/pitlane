@@ -18,7 +18,7 @@ import { DISPATCHER_UNIT, HEAL, planHeals } from './pitlane-supervisor-heal.mjs'
 import { THRESHOLDS, detect, joinQueue, joinRegistrations, queuedFrom } from './pitlane-supervisor-detect.mjs';
 import { readOutcomes, summarizeOutcomes } from './pitlane-outcomes.mjs';
 import { SLICES, pushSample, sampleSlice, windowRates } from './pitlane-slices.mjs';
-import { hourly, makePrivate, privateDir, publicStats, readWaits, readerGid, summarize, writePrivate, writePublic } from './pitlane-waits.mjs';
+import { hostRowNames, hourly, makePrivate, ofHost, privateDir, publicStats, readWaits, readerGid, summarize, writePrivate, writePublic } from './pitlane-waits.mjs';
 
 const env = process.env;
 const TICK_SEC = Math.max(30, Number(env.TICK_SEC) || 60);
@@ -85,6 +85,22 @@ export function parseIsolated(text) {
  * pool row (docs/pools.md) has `pool` set to its owner and `repo` `pool:<owner>`, which lists nothing
  * itself: its registration is looked for in every listed repository of that owner.
  */
+/**
+ * Every number the tick reports and publishes, from the recorded waits and outcomes of the jobs this
+ * host's rows took (ofHost against the manifest's row names): a job another self-hosted pool ran for
+ * the same repositories carries the self-hosted label too, and is left out here, so the published
+ * start, run, queued-to-done and suspect counts are this host's alone. Pure, exported for tests.
+ */
+export function hostNumbers(waitEntries, outcomeEntries, rowNames, now) {
+  const entries = ofHost(waitEntries, rowNames);
+  const own = ofHost(outcomeEntries, rowNames);
+  const waits = summarize(entries, now, 3600000);
+  const waits24 = summarize(entries, now, 24 * 3600000);
+  const outcomes = { lastHour: summarizeOutcomes(own, now, 3600000), last24h: summarizeOutcomes(own, now, 24 * 3600000) };
+  const published = publicStats(waits24.all, outcomes.last24h, now, { lastHour: waits.all, hours: hourly(entries, now, 24) });
+  return { entries, waits, waits24, outcomes, published };
+}
+
 export function supervisedRows(manifestText) {
   const rows = [];
   for (const line of manifestText.split('\n')) {
@@ -267,7 +283,8 @@ export function metricsText(status) {
 
 async function tick(state) {
   const now = Date.now();
-  const rows = supervisedRows(readFileSync(MANIFEST, 'utf8'));
+  const manifestText = readFileSync(MANIFEST, 'utf8');
+  const rows = supervisedRows(manifestText);
   const pinned = existsSync(VERSION_FILE) ? parsePinned(readFileSync(VERSION_FILE, 'utf8')) : null;
   const parked = new Set(existsSync(PARK_DIR) ? readdirSync(PARK_DIR) : []);
   const heldDir = join(OUT_DIR, 'held');
@@ -321,11 +338,7 @@ async function tick(state) {
   let dispatcherState = { active: 'unknown', result: '' };
   try { const d = parseShow(systemctlShow(DISPATCHER_UNIT), now); dispatcherState = { active: d.active, result: d.result }; } catch { /* no unit */ }
   const dispatcherActive = dispatcherState.active === 'active';
-  const entries = readWaits(join(OUT_DIR, 'waits.jsonl'));
-  const waits = summarize(entries, now, 3600000);
-  const waits24 = summarize(entries, now, 24 * 3600000);
-  const outcomeEntries = readOutcomes(OUTCOMES_DIR, now - 24 * 3600000, now);
-  const outcomes = { lastHour: summarizeOutcomes(outcomeEntries, now, 3600000), last24h: summarizeOutcomes(outcomeEntries, now, 24 * 3600000) };
+  const { waits, waits24, outcomes, published } = hostNumbers(readWaits(join(OUT_DIR, 'waits.jsonl')), readOutcomes(OUTCOMES_DIR, now - 24 * 3600000, now), hostRowNames(manifestText), now);
   const slices = {};
   for (const name of SLICES) {
     const smp = sampleSlice(CGROUP_ROOT, name, now);
@@ -402,7 +415,7 @@ async function tick(state) {
   writePrivate(join(OUT_DIR, 'status.json'), `${JSON.stringify(status, null, 1)}\n`, READ_GID);
   writePrivate(join(OUT_DIR, 'metrics.prom'), metricsText(status), READ_GID);
   // The numbers shown outside the box (docs/showcase.md): 24 h, every repository together, none named.
-  try { writePublic(join(OUT_DIR, 'public'), publicStats(waits24.all, outcomes.last24h, now, { lastHour: waits.all, hours: hourly(entries, now, 24) })); } catch (err) { log(`public numbers not written: ${err?.message ?? err}`); }
+  try { writePublic(join(OUT_DIR, 'public'), published); } catch (err) { log(`public numbers not written: ${err?.message ?? err}`); }
   // One line per finding per change, so the journal stays readable on a steady fault.
   const keys = new Set(findings.map((f) => `${f.class}|${f.row ?? ''}|${f.msg}`));
   for (const f of findings) if (!state.logged.has(`${f.class}|${f.row ?? ''}|${f.msg}`)) log(`${f.severity} ${f.class}${f.row ? ` ${f.row}` : ''}: ${f.msg}`);

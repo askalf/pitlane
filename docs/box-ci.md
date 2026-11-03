@@ -17,11 +17,11 @@ runs on the host is described in one place. The host deploy ships it the way it 
 | --- | --- | --- |
 | `box-ci/box-ci.mjs` | `/opt/askalf/box-ci.mjs` | the service: poll, plan, run act in a transient scope as the run account, post statuses |
 | `box-ci/box-ci.service` | `/etc/systemd/system/box-ci.service` | root unit, `gha-exec.slice`; deployed, not self-enabled |
-| `box-ci/box-ci.example.json` | (the operator writes `/etc/askalf/box-ci.json` from it) | the enrolled repositories, concurrency, timeouts |
+| `box-ci/box-ci.example.json` | (the host's admin writes `/etc/askalf/box-ci.json` from it) | the enrolled repositories, concurrency, timeouts |
 | `box-ci/install-tools.sh` | run on the host as root | installs act and the Chromium playwright-core drives, both pinned by version and sha256 |
 | `box-ci/box-ci.test.mjs` | | the unit test, in `node --test` with the rest |
 
-The operator-only files, never in a repository: `/etc/askalf/box-ci.json` (root 600) and
+The admin-only files, never in a repository: `/etc/askalf/box-ci.json` (root 600) and
 `/etc/askalf/box-ci.token` (root 600, a fine-grained token with contents read and commit statuses
 write on the enrolled repositories).
 

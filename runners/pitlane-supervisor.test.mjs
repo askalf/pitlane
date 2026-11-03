@@ -1,7 +1,8 @@
 // node --test runners/pitlane-supervisor.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { journalLine, metricsText, parseHeldMark, parseIsolated, parsePinned, parseRowPinned, parseShow, parseStat, pauseMs, failuresByUnit, supervisedRows } from './pitlane-supervisor.mjs';
+import { hostNumbers, journalLine, metricsText, parseHeldMark, parseIsolated, parsePinned, parseRowPinned, parseShow, parseStat, pauseMs, failuresByUnit, supervisedRows } from './pitlane-supervisor.mjs';
+import { hostRowNames, ofHost } from './pitlane-waits.mjs';
 
 test('ticks start a cadence apart whatever the tick took; a tick past the cadence gets a short breath, not the next tick at once', () => {
   assert.equal(pauseMs(0, 60), 60000);
@@ -130,4 +131,62 @@ test('the journal line a hold carries: the unit\'s own last word over systemd\'s
   const long = journalLine('x'.repeat(500));
   assert.equal(long.length, 200);
   assert.ok(long.endsWith('...'));
+});
+
+// ---- the published numbers count this host's rows only (docs/method.md) -------------------------
+
+const HOST_MANIFEST = [
+  '# rows of this host',
+  'app-exec-e1  repo:example/app  exec  gha-exec  /srv/gha/app-exec-e1  self-hosted,Linux,X64,app-exec  ephemeral',
+  'pool-e1      pool:example      exec  gha-exec  /srv/gha/pool-e1      self-hosted,Linux,X64,pool      ephemeral',
+  'old-root     repo:example/app  build root      /srv/gha/old-root     self-hosted,Linux,X64,app-build adopt',
+  '',
+].join('\n');
+
+test('hostRowNames: every row the manifest lists, pool and persistent rows included; comments and blanks skipped', () => {
+  assert.deepEqual([...hostRowNames(HOST_MANIFEST)].sort(), ['app-exec-e1', 'old-root', 'pool-e1']);
+  assert.deepEqual([...hostRowNames('')], []);
+  assert.deepEqual([...hostRowNames(undefined)], []);
+});
+
+test('ofHost: keeps entries a host row took; drops another pool runner and a job no runner took', () => {
+  const rows = hostRowNames(HOST_MANIFEST);
+  const kept = ofHost([{ runner: 'pool-e1' }, { runner: 'GitHub Actions 1000' }, { runner: '' }, {}, { runner: 'app-exec-e1' }], rows);
+  assert.deepEqual(kept.map((e) => e.runner), ['pool-e1', 'app-exec-e1']);
+});
+
+test('hostNumbers: a job another self-hosted pool took is in none of the published start, run, queued-to-done or suspect numbers', () => {
+  const now = Date.parse('2026-11-03T12:00:00Z');
+  const rows = hostRowNames(HOST_MANIFEST);
+  const at = now - 10 * 60000;
+  const waits = [
+    { at, repo: 'example/app', runner: 'app-exec-e1', waitMs: 2000 },
+    { at, repo: 'example/app', runner: 'pool-e1', waitMs: 4000 },
+    // Another self-hosted pool serving the same repository: a long wait and a suspect failure.
+    { at, repo: 'example/app', runner: 'elsewhere-runner-7', waitMs: 600000 },
+  ];
+  const outcomes = [
+    { id: 1, at, repo: 'example/app', runner: 'app-exec-e1', conclusion: 'success', class: 'success', waitMs: 2000, runMs: 10000 },
+    { id: 2, at, repo: 'example/app', runner: 'pool-e1', conclusion: 'success', class: 'success', waitMs: 4000, runMs: 20000 },
+    { id: 3, at, repo: 'example/app', runner: 'elsewhere-runner-7', conclusion: 'failure', class: 'runner-lost-suspect', waitMs: 600000, runMs: 900000 },
+    { id: 4, at, repo: 'example/app', runner: '', conclusion: 'cancelled', class: 'cancelled-queued', waitMs: null, runMs: null },
+  ];
+  const { published, waits24, outcomes: o } = hostNumbers(waits, outcomes, rows, now);
+  assert.equal(published.jobs, 2, 'started: the two host rows only');
+  assert.deepEqual(published.queueWaitMs, { p50: 2000, p90: 4000 });
+  assert.equal(published.finished, 2, 'finished: the two host rows only');
+  assert.equal(published.ran, 2);
+  assert.deepEqual(published.runMs, { p50: 10000, p90: 20000 });
+  assert.deepEqual(published.feltMs, { p50: 12000, p90: 24000 });
+  assert.equal(published.runnerSuspect, 0, "the other pool's runner-lost job is not this host's");
+  assert.equal(published.lastHour.jobs, 2);
+  assert.equal(published.hours.reduce((n, h) => n + h.jobs, 0), 2);
+  assert.equal(waits24.all.n, 2);
+  assert.equal(o.last24h.n, 2);
+  // Every field the page, the badge and the profile board read is still there.
+  for (const k of ['at', 'window', 'jobs', 'queueWaitMs', 'targets', 'finished', 'runnerSuspect', 'ran', 'runMs', 'feltMs', 'lastHour', 'hours']) assert.ok(k in published, k);
+  // The same job on a host row counts.
+  const mine = hostNumbers(waits, [...outcomes, { id: 5, at, repo: 'example/app', runner: 'pool-e1', conclusion: 'failure', class: 'runner-lost-suspect', waitMs: 3000, runMs: 5000 }], rows, now);
+  assert.equal(mine.published.runnerSuspect, 1);
+  assert.equal(mine.published.finished, 3);
 });

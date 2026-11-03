@@ -154,6 +154,24 @@ test('isolated: an exec row on the tier account leaves its group, and a lane row
   assertOne(problemsWith(i, swap('oss-read-1       groups=gha-oss-read\n', '')), `runners.manifest:${rows(EXAMPLES['runners.manifest']).find((r) => r.words[0] === 'oss-read-1').n}`, /oss-read-1 runs as gha-oss-read/);
 });
 
+test('isolated: a gha-redline row with no redline label (fleet status) holds no group, and a Redline row keeps its', () => {
+  const row = 'app-status-e1    repo:example/app    read   gha-redline  /srv/gha/app-status-e1    self-hosted,Linux,X64,fleet-status ephemeral';
+  const withRow = (isolatedLine) => configProblems({
+    ...EXAMPLES,
+    'runners.manifest': `${EXAMPLES['runners.manifest']}${row}
+`,
+    'runners.isolated': `${EXAMPLES['runners.isolated']}${isolatedLine}
+`,
+  });
+  assert.deepEqual(withRow('app-status-e1    groups=none'), []);
+  const last = rows(`${EXAMPLES['runners.isolated']}x
+`).at(-1).n;
+  assertOne(withRow('app-status-e1    groups=gha-redline'), `runners.isolated:${last}`, /app-status-e1 takes no redline job, so it reads none of gha-redline's key files: give it groups=none/);
+  assertOne(withRow('app-status-e1'), `runners.isolated:${last}`, /give it groups=none/);
+  // The Redline row itself still needs its lane's group.
+  assertOne(problemsWith('runners.isolated', swap('app-redline-e1   groups=gha-redline', 'app-redline-e1   groups=none')), `runners.isolated:${rows(EXAMPLES['runners.isolated']).find((r) => r.words[0] === 'app-redline-e1').n}`, /app-redline-e1 reads gha-redline's key files: give it groups=gha-redline/);
+});
+
 test('build-allow: three fields of the right shapes, no CR, once each', () => {
   const b = 'runners.build-allow';
   const n = rows(EXAMPLES[b]).at(-1).n + 1;
