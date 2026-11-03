@@ -129,7 +129,7 @@ Facts from each project's own documentation:
 | Runs on | one Linux host, systemd | Kubernetes | AWS (EC2, Lambda) | the vendor's machines |
 | Job boundary | a Unix account per row, slices, a shared kernel | a pod per runner | an instance per runner (per job in its ephemeral mode) | usually a VM per job |
 | Scale to zero | yes | yes | yes | not applicable |
-| Public live numbers | yes, per job, on a public page | not part of the project | not part of the project | varies by vendor |
+| Public live numbers | aggregate numbers on a public page, measured from every job; each job's own run page carries its wait (except rows that skip the summary line, fleet status rows by default) | not part of the project | not part of the project | varies by vendor |
 | Cost | the host | the cluster | the AWS bill | per minute |
 
 pitlane trades the stronger VM boundary of the instance and VM designs for one host you already run,

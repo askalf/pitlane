@@ -37,7 +37,15 @@ where each number comes from, what is left out, and how to check it.
 ## What is left out
 
 - Jobs that ran anywhere else, on GitHub-hosted runners or another self-hosted pool, are not in the
-  numbers: only jobs one of these runners took.
+  numbers: only jobs one of these runners took. Membership is decided by name. Each row registers
+  under its own name, so a job counts only when the runner GitHub names for it (`runner_name` in the
+  webhook) is one of the rows in this host's manifest, pool and persistent rows included
+  (`hostRowNames` and `ofHost` in [runners/pitlane-waits.mjs](../runners/pitlane-waits.mjs), applied
+  by `hostNumbers` in [runners/pitlane-supervisor.mjs](../runners/pitlane-supervisor.mjs)). The
+  self-hosted label alone is not enough: another self-hosted pool serving the same repositories
+  carries it too.
+- A job no runner took, such as one cancelled while it waited, has no runner name, so it is not
+  counted either.
 - Nothing published names a repository, a runner or a single job; the totals are all there is.
 
 ## Warm and cold

@@ -127,6 +127,30 @@ const statOf = (list) => {
   return { n: w.length, p50: percentile(w, 50), p90: percentile(w, 90), max: w.length ? w[w.length - 1] : null };
 };
 
+/**
+ * The names of this host's rows: the first field of every row the manifest lists, whatever its scope,
+ * tier or mode, pool rows included. A row registers under its own name, so GitHub's runner_name for a
+ * job one of these rows took is one of them.
+ */
+export function hostRowNames(manifestText) {
+  const names = new Set();
+  for (const line of String(manifestText ?? '').split('\n')) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const name = line.trim().split(/\s+/)[0];
+    if (name) names.add(name);
+  }
+  return names;
+}
+
+/**
+ * The entries (waits or outcomes) a job one of this host's rows took: the self-hosted label alone also
+ * matches a job another self-hosted pool ran for the same repositories, and one no runner took has no
+ * runner name. The published numbers count only these (docs/method.md).
+ */
+export function ofHost(entries, rowNames) {
+  return (entries ?? []).filter((e) => rowNames.has(String(e?.runner ?? '')));
+}
+
 /** { n, p50, p90, max } in ms for the entries inside the window; overall and per repository. */
 export function summarize(entries, now, windowMs) {
   const inWin = entries.filter((e) => e.at > now - windowMs && e.at <= now + AHEAD_MS);

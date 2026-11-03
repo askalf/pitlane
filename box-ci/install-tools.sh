@@ -18,13 +18,15 @@ ACT_VERSION=0.2.89
 # sha256 of act_Linux_x86_64.tar.gz from the release's checksums.txt, then of the act binary inside it.
 ACT_TARBALL_SHA256=0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0
 ACT_BIN_SHA256=6be37b104430efc210d5130495bedcff2dc7cd6780a38d88f3d205e7f1185cc1
-ACT_BIN=/opt/box-ci/act
+# Where both tools live; BOX_CI_DIR moves them (the installer test points it at a temporary directory).
+BOX_CI_DIR="${BOX_CI_DIR:-/opt/box-ci}"
+ACT_BIN="$BOX_CI_DIR/act"
 
 PW_VERSION=1.63.0
 # The registry's sha512 for that version's tarball (`npm view playwright-core@<version> dist.integrity`).
 # npm ci checks it, so the install is pinned by hash, not only by version. Move it with PW_VERSION.
 PW_INTEGRITY=sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==
-PW_BROWSERS=/opt/box-ci/pw-browsers
+PW_BROWSERS="$BOX_CI_DIR/pw-browsers"
 
 MODE="${1:-check}"
 case "$MODE" in check|apply) ;; *) echo "usage: $0 [check|apply]"; exit 2 ;; esac
@@ -61,7 +63,7 @@ fi
 # --- Chromium for playwright-core ---
 # The browser directory names carry Playwright's build number, not the package version, so the
 # check asks the pinned playwright-core which build it wants and looks for that one.
-pw_dir="/opt/box-ci/pw-install"
+pw_dir="$BOX_CI_DIR/pw-install"
 pw_ok=0
 if [ -d "$PW_BROWSERS" ] && find "$PW_BROWSERS" -maxdepth 3 -type f -name chrome </dev/null 2>/dev/null | grep -q .; then
   if [ -f "$pw_dir/node_modules/playwright-core/package.json" ] && [ "$(node -p "require('$pw_dir/node_modules/playwright-core/package.json').version" </dev/null)" = "$PW_VERSION" ]; then
