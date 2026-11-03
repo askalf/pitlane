@@ -165,6 +165,17 @@ install_all() {
     [ -d "$CONFIG" ] || { echo "install.sh: --config $CONFIG is not a directory" >&2; exit 1; }
     CONFIG="$(cd "$CONFIG" && pwd)"
     echo "config: $CONFIG"
+    # runner-config.mjs reads a missing file as empty, so their presence is checked here, before
+    # anything is written: an empty file is a choice, a missing one is a mistake.
+    local missing=()
+    while read -r src dst; do
+      [ -n "$src" ] || continue
+      [ "$src" = pitlane-build.env ] || [ -f "$CONFIG/$src" ] || missing+=("$src")
+    done <<< "$CONFIG_FILES"
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "install.sh: $CONFIG has no ${missing[*]} (an empty file is fine); nothing was installed" >&2
+      exit 1
+    fi
     # One set or nothing: a manifest whose rows the other files do not cover installs nothing.
     node "$HERE/runner-config.mjs" "$CONFIG" || { echo "install.sh: fix the config above; nothing was installed" >&2; exit 1; }
   elif [ ! -e "$ROOT/etc/askalf/gha-runners.manifest" ]; then
@@ -192,8 +203,7 @@ install_all() {
     CHANGED=0
     while read -r src dst; do
       [ -n "$src" ] || continue
-      if [ -f "$CONFIG/$src" ]; then put "$CONFIG/$src" "$dst" 640
-      elif [ "$src" != pitlane-build.env ]; then echo "install.sh: $CONFIG/$src is missing" >&2; exit 1; fi
+      [ ! -f "$CONFIG/$src" ] || put "$CONFIG/$src" "$dst" 640
     done <<< "$CONFIG_FILES"
     echo "  ($CHANGED changed)"
   fi
@@ -214,6 +224,16 @@ HOOK_SECRET=$secret
 HOOK_PORT=7311
 # A gid number lets that group read the dispatcher's state files (0640); none keeps them root's (0600).
 PITLANE_READ_GID=none"
+  echo "token files:"
+  # The root mint step reads one of these for every row, and apply holds a row whose file is
+  # missing, so both exist even when the runner App supplies every token. Empty, they hold none.
+  settings /etc/askalf/gha-repo.env "# Read by the root mint step for repo: and pool: rows (runners/README.md, Modes). Written once,
+# empty, by install.sh. With the runner App installed on the owner, leave it as it is.
+# Without the App: GH_REPO_RUNNER_TOKEN=<a fine-grained token, Administration: read and write
+# on those repositories>."
+  settings /etc/askalf/gha-org.env "# Read by the root mint step for org: rows (runners/README.md, Modes). Written once, empty, by
+# install.sh. GH_RUNNER_GROUP_ID=<runner group id> (1 when unset); without the org's own App,
+# GH_ORG_RUNNER_TOKEN=<a token with Self-hosted runners: read and write on the org>."
   settings /etc/askalf/pitlane-supervisor.env "# pitlane-supervisor (docs/supervisor.md). Written once by install.sh, which never overwrites it.
 # observe reports what is wrong and changes nothing; heal also does what docs/supervisor.md permits.
 PITLANE_MODE=observe
@@ -251,13 +271,14 @@ cat <<EOF
 Installed. Nothing is running yet. Next, as root:
 
   1. GitHub access for each owner the manifest names (runners/README.md, Modes), each file
-     root:root 600: the runner GitHub App, /etc/askalf/gha-app.env (GHA_APP_ID=<id>) and its key
-     /etc/askalf/gha-app.pem; or, without the App, a fine-grained token as GH_REPO_RUNNER_TOKEN in
-     /etc/askalf/gha-repo.env (Administration: read and write on those repositories) and one as
-     GITHUB_TOKEN in /root/.askalf/.env for the dispatcher's job listing (Actions: read; set
-     GHA_TOKEN_ENV in both settings files to keep it elsewhere).
-  2. gha-runners-apply.sh bootstrap           accounts, /srv/gha, the pinned runner
-     gha-runners-apply.sh apply --restart-idle
+     root:root 600. Either the runner GitHub App, installed on the owner: /etc/askalf/gha-app.env
+     (GHA_APP_ID=<id>) and its key /etc/askalf/gha-app.pem, and nothing else. Or tokens:
+     GH_REPO_RUNNER_TOKEN in /etc/askalf/gha-repo.env (Administration: read and write on those
+     repositories) and GITHUB_TOKEN in /root/.askalf/.env (Actions: read), which the dispatcher
+     lists jobs with and the supervisor checks registrations with (set GHA_TOKEN_ENV in both
+     settings files to keep it elsewhere). gha-repo.env and gha-org.env are already there, empty.
+  2. /opt/askalf/gha-runners-apply.sh bootstrap        accounts, /srv/gha, the pinned runner
+     /opt/askalf/gha-runners-apply.sh apply --restart-idle
   3. systemctl enable --now gha-ondemand.service pitlane-supervisor.service
      journalctl -u gha-ondemand -f            dry mode: it says what it would start and park
   4. The webhook, for starts without the poll wait: in the repository or organization settings,

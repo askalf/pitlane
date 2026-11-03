@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { unitFor } from './gha-ondemand.mjs';
+import { fileToken, unitFor } from './gha-ondemand.mjs';
 import { DISPATCHER_UNIT, HEAL, planHeals } from './pitlane-supervisor-heal.mjs';
 import { THRESHOLDS, detect, joinQueue, joinRegistrations, queuedFrom } from './pitlane-supervisor-detect.mjs';
 import { readOutcomes, summarizeOutcomes } from './pitlane-outcomes.mjs';
@@ -206,10 +206,8 @@ function diskPercent(path) {
   } catch { return null; }
 }
 
-function token() {
-  const line = readFileSync(TOKEN_ENV, 'utf8').split('\n').find((l) => l.startsWith('GITHUB_TOKEN='));
-  return line ? line.slice('GITHUB_TOKEN='.length).replace(/^"|"$/g, '').trim() : '';
-}
+// No token file (an App-only host): no token, so the GitHub side of each row is not checked.
+const token = () => fileToken(TOKEN_ENV);
 
 const etags = new Map();
 const cache = new Map();

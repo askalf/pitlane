@@ -116,8 +116,8 @@ You need:
 3. It ends by printing the rest: GitHub access for each owner, then
 
    ```
-   gha-runners-apply.sh bootstrap             # accounts, directories, the pinned runner
-   gha-runners-apply.sh apply --restart-idle
+   /opt/askalf/gha-runners-apply.sh bootstrap     # accounts, directories, the pinned runner
+   /opt/askalf/gha-runners-apply.sh apply --restart-idle
    systemctl enable --now gha-ondemand.service pitlane-supervisor.service
    ```
 

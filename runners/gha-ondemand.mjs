@@ -472,10 +472,20 @@ export async function tokensByOwner(repos, fallback, app = appToken) {
   })));
 }
 
-function token() {
-  const line = readFileSync(TOKEN_ENV, 'utf8').split('\n').find((l) => l.startsWith('GITHUB_TOKEN='));
+/**
+ * GITHUB_TOKEN from a token file, or '' when the file is not there: a host whose runner App is
+ * installed on every owner needs no such file, and the tick then names any owner that has neither.
+ * Any other read error (a file root cannot read, a directory) is thrown. Exported for the supervisor
+ * and the tests.
+ */
+export function fileToken(path) {
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch (err) { if (err?.code === 'ENOENT') return ''; throw err; }
+  const line = text.split('\n').find((l) => l.startsWith('GITHUB_TOKEN='));
   return line ? line.slice('GITHUB_TOKEN='.length).replace(/^"|"$/g, '').trim() : '';
 }
+
+const token = () => fileToken(TOKEN_ENV);
 
 // Below this many requests left on the token's hour, a tick stops asking: the token is shared with
 // the host's other GitHub pollers, and a flood of new runs (each a jobs request no ETag can save) must not drain it.

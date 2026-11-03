@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { POOL_IDLE_MS, RateFloorError, appToken, claimOf, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
+import { POOL_IDLE_MS, RateFloorError, appToken, claimOf, fileToken, tokensByOwner, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
 
 test('the state document: every row with its unit reading and what the tick did to it, each queued job and where it went, the knobs, the budget, the events; and it serialises', () => {
   const state = {
@@ -410,6 +410,20 @@ bad-2 pool:example/app exec gha-exec /srv/gha/bad-2 self-hosted,x ephemeral
   // An owner whose name another owner's starts with is not that owner.
   const near = { id: 202, repo: 'example-two/app', labels: ['self-hosted', 'Linux', 'X64', 'app-exec'] };
   assert.deepEqual(plan(two, {}, [near], { now: 0, idleMs: 10 * MIN }), { start: [], park: [], room: [], held: 0, queue: [] });
+});
+
+test('an App-only host: no token file is no token, and the App\'s token serves every owner it is installed on', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'token-file-'));
+  assert.equal(fileToken(join(d, 'absent.env')), '', 'a missing file is no token, not a failed tick');
+  writeFileSync(join(d, 'a.env'), 'OTHER=1\nGITHUB_TOKEN="ghp_fake"\n');
+  assert.equal(fileToken(join(d, 'a.env')), 'ghp_fake');
+  writeFileSync(join(d, 'b.env'), '# empty\n');
+  assert.equal(fileToken(join(d, 'b.env')), '');
+  assert.throws(() => fileToken(d), 'a path that is there but not readable as a file is still an error');
+  const app = async (owner) => (owner === 'your-org' ? 'ghs_app' : '');
+  const toks = await tokensByOwner(['your-org/your-repo', 'other/x'], fileToken(join(d, 'absent.env')), app);
+  assert.deepEqual(toks.get('your-org'), { tok: 'ghs_app', source: 'app' });
+  assert.deepEqual(toks.get('other'), { tok: '', source: 'GITHUB_TOKEN' }, 'an owner with neither has an empty token, which the tick names');
 });
 
 test('the shipped examples are managed as they stand: their owners are stand-ins, and nothing in them needs editing for the dispatcher', () => {

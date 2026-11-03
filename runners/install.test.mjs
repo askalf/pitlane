@@ -4,7 +4,7 @@
 // unit and slice, every module a service imports, every /opt path a unit runs). No root, no systemd.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -49,6 +49,12 @@ test('install --root --config: the code, the units and the config at the paths t
   assert.match(od, /^HOOK_SECRET=[0-9a-f]{64}$/m, 'a fresh 32-byte webhook secret');
   assert.match(od, /^HOOK_PORT=7311$/m);
   assert.match(od, /^PITLANE_READ_GID=none$/m, 'no reader group: the unit\'s gid 1001 is this host\'s, not yours');
+  for (const f of ['gha-repo.env', 'gha-org.env']) {
+    const t = readFileSync(at(root, `etc/askalf/${f}`), 'utf8');
+    assert.ok(t.split('\n').every((l) => l === '' || l.startsWith('#')), `${f} is written empty: comments only, no token`);
+  }
+  assert.match(r.out, /\/opt\/askalf\/gha-runners-apply\.sh bootstrap/, 'the next steps name apply by its installed path');
+  assert.doesNotMatch(r.out, /^\s+gha-runners-apply\.sh /m, 'never a bare command that is not on PATH');
   const sv = readFileSync(at(root, 'etc/askalf/pitlane-supervisor.env'), 'utf8');
   assert.match(sv, /^PITLANE_MODE=observe$/m);
   assert.match(sv, /^PITLANE_READ_GID=none$/m);
@@ -62,6 +68,8 @@ test('install --root --config: the code, the units and the config at the paths t
     assert.equal(mode('etc/askalf/gha-runners.manifest'), '640');
     assert.equal(mode('etc/askalf/gha-ondemand.env'), '600', 'it holds the webhook secret');
     assert.equal(mode('etc/askalf/pitlane-supervisor.env'), '600');
+    assert.equal(mode('etc/askalf/gha-repo.env'), '600', 'a token goes in it');
+    assert.equal(mode('etc/askalf/gha-org.env'), '600');
   }
 });
 
@@ -70,6 +78,7 @@ test('a second run changes nothing it already wrote: the same files say nothing,
   assert.equal(run(['install', '--root', posix(root), '--config', posix(MINIMAL)]).code, 0);
   const before = readFileSync(at(root, 'etc/askalf/gha-ondemand.env'), 'utf8');
   writeFileSync(at(root, 'etc/askalf/pitlane-supervisor.env'), 'PITLANE_MODE=heal\n');
+  writeFileSync(at(root, 'etc/askalf/gha-repo.env'), 'GH_REPO_RUNNER_TOKEN=x\n');
   const r = run(['install', '--root', posix(root), '--config', posix(MINIMAL)]);
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /\(\d+ files, 0 changed\)/);
@@ -77,6 +86,7 @@ test('a second run changes nothing it already wrote: the same files say nothing,
   assert.match(r.out, /kept\s+\/etc\/askalf\/gha-ondemand\.env/);
   assert.equal(readFileSync(at(root, 'etc/askalf/gha-ondemand.env'), 'utf8'), before, 'the webhook secret GitHub holds stays valid');
   assert.equal(readFileSync(at(root, 'etc/askalf/pitlane-supervisor.env'), 'utf8'), 'PITLANE_MODE=heal\n', 'an edited settings file is the operator\'s');
+  assert.equal(readFileSync(at(root, 'etc/askalf/gha-repo.env'), 'utf8'), 'GH_REPO_RUNNER_TOKEN=x\n', 'a token file once written is never touched');
 });
 
 test('without --config it upgrades code and units only, keeping the config on the host; with no config there it refuses', () => {
@@ -95,6 +105,26 @@ test('without --config it upgrades code and units only, keeping the config on th
   assert.match(r.out, /changed\s+\/opt\/askalf\/gha-ondemand\.mjs/);
   assert.equal(readFileSync(at(root, 'opt/askalf/gha-ondemand.mjs'), 'utf8'), readFileSync(join(HERE, 'gha-ondemand.mjs'), 'utf8'));
   assert.equal(readFileSync(at(root, 'etc/askalf/runners.cpu'), 'utf8'), '# edited on the host\n', 'the host\'s config is not touched');
+});
+
+test('a config missing a required file installs nothing, on a new host or over an installed one', () => {
+  const cfg = staged();
+  cpSync(MINIMAL, cfg, { recursive: true });
+  rmSync(join(cfg, 'runners.retired'));
+  const fresh = staged();
+  const r = run(['install', '--root', posix(fresh), '--config', posix(cfg)]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /has no runners\.retired \(an empty file is fine\); nothing was installed/);
+  assert.deepEqual(readdirSync(fresh), [], 'nothing written on a new host');
+  // Over an installed host: no code, unit or config file changes.
+  const root = staged();
+  assert.equal(run(['install', '--root', posix(root), '--config', posix(MINIMAL)]).code, 0);
+  writeFileSync(join(cfg, 'runners.cpu'), '# would replace the host\'s\n');
+  writeFileSync(at(root, 'opt/askalf/gha-ondemand.mjs'), '// an older copy\n');
+  const before = readFileSync(at(root, 'etc/askalf/runners.cpu'), 'utf8');
+  assert.equal(run(['install', '--root', posix(root), '--config', posix(cfg)]).code, 1);
+  assert.equal(readFileSync(at(root, 'etc/askalf/runners.cpu'), 'utf8'), before, 'the host\'s config is untouched');
+  assert.equal(readFileSync(at(root, 'opt/askalf/gha-ondemand.mjs'), 'utf8'), '// an older copy\n', 'and so is its code');
 });
 
 test('a config that does not hold together installs nothing', () => {
