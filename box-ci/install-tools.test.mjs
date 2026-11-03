@@ -83,7 +83,7 @@ test('apply writes a package.json and a lockfile carrying the pinned version and
   assert.equal(pw.length, 1, calls.join('\n'));
   assert.match(pw[0], /^playwright-core install chromium \| /);
   assert.ok(pw[0].endsWith(`${posix(box)}/pw-browsers`), pw[0]);
-  assert.match(r.stdout, new RegExp(`chromium: installed for playwright-core ${PW_VERSION.replace(/\./g, '\\.')}`));
+  assert.ok(r.stdout.includes(`chromium: installed for playwright-core ${PW_VERSION}`), r.stdout);
 });
 
 test('a failing npm ci stops the run before the browser install', () => {
