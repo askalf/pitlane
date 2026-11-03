@@ -271,7 +271,7 @@ test('the mint step delivers the row file by rename from the root-only staging d
  * `guard` is the build guard ('exec', 'plain': not executable, 'link': a symlink to an executable one,
  * 'none': no file) and `uid` what the stub id prints: 0 is a root row.
  */
-function runStep(rowFor, { hook = 'none', guard = 'none', uid = 1000 } = {}) {
+function runStep(rowFor, { hook = 'none', guard = 'none', uid = 1000, env = {} } = {}) {
   const pool = mkdtempSync(join(tmpdir(), 'run-')).split(sep).join('/');
   const dir = `${pool}/r1`;
   mkdirSync(join(dir, 'bin'), { recursive: true });
@@ -302,6 +302,7 @@ function runStep(rowFor, { hook = 'none', guard = 'none', uid = 1000 } = {}) {
     env: {
       ...process.env, PATH: `${pool}/stubs:${process.env.PATH}`, GHA_POOL_ROOT: pool, GHA_MANIFEST: join(pool, 'no-such-manifest'),
       PITLANE_JOB_SUMMARY: hookPath, ACTIONS_RUNNER_HOOK_JOB_COMPLETED: '/inherited/hook', PITLANE_BUILD_GUARD: guardPath, ACTIONS_RUNNER_HOOK_JOB_STARTED: '/inherited/started',
+      ...env,
     },
     encoding: 'utf8',
   });
@@ -342,6 +343,23 @@ test('the run step points the runner at the job-completed hook only when the hoo
   const off = runStep((dir) => `${dir} lbl\n`);
   assert.equal(off.status, 0, off.text);
   assert.ok(off.text.includes('HOOK=unset\n'), off.text);
+});
+
+test('a fleet status row runs no job-completed hook; any other label keeps it, and an empty skip list gives every row the hook', () => {
+  const hookOf = (r) => /HOOK=(\S+)/.exec(r.text)?.[1];
+  const status = runStep((dir) => `${dir} self-hosted,Linux,X64,fleet-status\n`, { hook: 'exec' });
+  assert.equal(status.status, 0, status.text);
+  assert.equal(hookOf(status), 'unset', 'fleet-status skips the hook');
+  const first = runStep((dir) => `${dir} fleet-status,self-hosted\n`, { hook: 'exec' });
+  assert.equal(hookOf(first), 'unset', 'a skip label anywhere in the list');
+  const near = runStep((dir) => `${dir} self-hosted,fleet-status-x,ci-exec\n`, { hook: 'exec' });
+  assert.equal(hookOf(near), near.hookPath, 'a label that only starts like one keeps the hook');
+  const exec = runStep((dir) => `${dir} self-hosted,Linux,X64,ci-exec\n`, { hook: 'exec' });
+  assert.equal(hookOf(exec), exec.hookPath);
+  const all = runStep((dir) => `${dir} self-hosted,fleet-status\n`, { hook: 'exec', env: { PITLANE_SUMMARY_SKIP_LABELS: '' } });
+  assert.equal(hookOf(all), all.hookPath, 'an empty skip list gives every row the hook');
+  const other = runStep((dir) => `${dir} self-hosted,ci-redline\n`, { hook: 'exec', env: { PITLANE_SUMMARY_SKIP_LABELS: 'ci-redline,docs' } });
+  assert.equal(hookOf(other), 'unset', 'the skip list is the variable\'s, not a fixed label');
 });
 
 test('a root row points the runner at the build guard as its job-started hook; a job account\'s row never does', () => {

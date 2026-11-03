@@ -275,7 +275,7 @@ aside (the runner needs it, below), or read these files:
 | `/srv/gha` | `root:root` 755 | listable by every job: the runner lists each directory above a job's `_work` before the job starts and fails the job when one refuses. Each `/srv/gha/<row>` is 1770, the row's group, so another row's files stay out of reach; the row names do not |
 | `/run/askalf/pitlane` | `root:root` 0711 | a job opens `jobs/<row>` and `public/` by name (`docs/showcase.md`) and lists nothing |
 | `status.json`, `metrics.prom` (supervisor); `dispatcher.json`, `dispatcher.beat`, `waits.jsonl`, `waits.jsonl.1` (dispatcher) | `root:<read group>` 0640 | root (the supervisor, the host's runner watchdog, the deploy presses) and the dashboard |
-| `/run/askalf/pitlane/held` (the supervisor's hold marks) | `root:root` 0700, marks 0600 | root: the supervisor (and the operator, lifting a hold by hand) |
+| `/run/askalf/pitlane/held` (the supervisor's hold marks) | `root:root` 0700, marks 0600 | root: the supervisor (and the host's admin, lifting a hold by hand) |
 | `/run/askalf/gha-ondemand` (the park marks) | `root:root` 0700 | root: the dispatcher, the mint step, apply, the supervisor, the pool and drain presses |
 | `/var/lib/askalf/pitlane` (the outcomes, `docs/outcomes.md`) | `root:root` 0700, files 0600 | root: the dispatcher writes, the supervisor reads |
 

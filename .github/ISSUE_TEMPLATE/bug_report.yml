@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in pitlane does not do what its docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Report a vulnerability privately as SECURITY.md describes, never here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran or what the runner did, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How to reproduce
+      description: The row's manifest line (with names changed if you like), the command or workflow, and the steps.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The unit's journal around the failure (`journalctl -u <unit> --since ...`) or the job log. Remove tokens and hostnames.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: pitlane version or commit
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: Distribution and version, systemd version, Node.js version.

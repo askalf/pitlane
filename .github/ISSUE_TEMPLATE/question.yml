@@ -1,0 +1,16 @@
+name: Question
+description: How something works, or whether pitlane fits your setup.
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: Link the doc you read first, if one is close.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Repositories or organization, how many rows, and what the jobs need (docker, toolchains, secrets).

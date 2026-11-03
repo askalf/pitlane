@@ -21,6 +21,9 @@ ACT_BIN_SHA256=6be37b104430efc210d5130495bedcff2dc7cd6780a38d88f3d205e7f1185cc1
 ACT_BIN=/opt/box-ci/act
 
 PW_VERSION=1.63.0
+# The registry's sha512 for that version's tarball (`npm view playwright-core@<version> dist.integrity`).
+# npm ci checks it, so the install is pinned by hash, not only by version. Move it with PW_VERSION.
+PW_INTEGRITY=sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==
 PW_BROWSERS=/opt/box-ci/pw-browsers
 
 MODE="${1:-check}"
@@ -75,8 +78,12 @@ if [ "$pw_ok" = 0 ]; then
   gaps=$((gaps + 1))
   if [ "$MODE" = apply ]; then
     install -d -m 755 "$pw_dir" "$PW_BROWSERS" </dev/null
-    [ -f "$pw_dir/package.json" ] || echo '{"name":"box-ci-pw-install","private":true}' > "$pw_dir/package.json"
-    (cd "$pw_dir" && npm install --no-audit --no-fund --save-exact "playwright-core@$PW_VERSION" </dev/null >/dev/null)
+    # A package.json and a lockfile written here, then npm ci: the tarball must match PW_INTEGRITY, and
+    # playwright-core has no dependencies, so the lockfile has one entry.
+    printf '{"name":"box-ci-pw-install","private":true,"dependencies":{"playwright-core":"%s"}}\n' "$PW_VERSION" > "$pw_dir/package.json"
+    printf '{"name":"box-ci-pw-install","lockfileVersion":3,"requires":true,"packages":{"":{"name":"box-ci-pw-install","dependencies":{"playwright-core":"%s"}},"node_modules/playwright-core":{"version":"%s","resolved":"https://registry.npmjs.org/playwright-core/-/playwright-core-%s.tgz","integrity":"%s","license":"Apache-2.0","bin":{"playwright-core":"cli.js"}}}}\n' \
+      "$PW_VERSION" "$PW_VERSION" "$PW_VERSION" "$PW_INTEGRITY" > "$pw_dir/package-lock.json"
+    (cd "$pw_dir" && npm ci --no-audit --no-fund </dev/null >/dev/null)
     # chromium alone: the e2e uses no other browser, and the headless shell comes with it.
     PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS" "$pw_dir/node_modules/.bin/playwright-core" install chromium </dev/null
     # The run account only reads the browser; the directory stays root's.

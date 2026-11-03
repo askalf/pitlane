@@ -1,0 +1,2 @@
+# The row runs as its own account with its own tool cache and no supplementary group (docs/isolation.md).
+app-exec-e1  groups=none

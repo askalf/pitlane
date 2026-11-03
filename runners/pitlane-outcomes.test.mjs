@@ -100,6 +100,18 @@ test('summary: classes, the runner-suspect share by runner, and percentiles', ()
   assert.deepEqual(summarizeOutcomes([], now, 3600000).suspect, { n: 0, rate: null, runners: {} });
 });
 
+test('summary: felt time is each job\'s wait plus its run, only for jobs with both, inside the window', () => {
+  const now = 1e12;
+  const e = (id, waitMs, runMs, at = now - 1000 * id) => ({ id, at, repo: 'askalf/dario', runner: 'r', class: 'success', waitMs, runMs });
+  // waits 1, 2, 3 s and runs 10, 20, 30 s: felt 11, 22, 33 s. A job without a wait, one without a run, and one
+  // outside the hour do not count.
+  const entries = [e(1, 1000, 10000), e(2, 2000, 20000), e(3, 3000, 30000), e(4, null, 40000), e(5, 5000, null), e(6, 6000, 60000, now - 7200000)];
+  const hour = summarizeOutcomes(entries, now, 3600000);
+  assert.deepEqual(hour.feltMs, { n: 3, p50: 22000, p90: 33000 });
+  assert.equal(hour.runMs.n, 4, 'run counts every job with a run, wait or not');
+  assert.deepEqual(summarizeOutcomes([], now, 3600000).feltMs, { n: 0, p50: null, p90: null });
+});
+
 test('the outcomes are root\'s alone: the directory 0700, each file 0600, a file from before the change tightened at its next line', { skip: process.platform === 'win32' }, () => {
   const dir = join(mkdtempSync(join(tmpdir(), 'pitlane-outcomes-')), 'pitlane');
   const now = Date.parse('2026-10-16T01:00:00Z');

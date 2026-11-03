@@ -172,11 +172,43 @@ id "$user" >/dev/null 2>&1 || fail "user $user does not exist (run gha-runners-a
 ver=$(awk '!/^[[:space:]]*(#|$)/ { print $1; exit }' "$VERSION_FILE")
 [ -x "$INSTALL_ROOT/$ver/bin/Runner.Listener" ] || fail "pinned runner $ver not installed (run gha-runners-apply.sh bootstrap)"
 
+# The previous job's runner timing, kept before the reset below removes _diag with everything else.
+# The runner's worker log is the only record of where a job's time went between its last step and
+# the moment the runner reported it done: that wait is a median 5 s here against 2 s on GitHub-hosted
+# runners, and up to 95 s, and the row holds its slot for all of it (docs/run-time.md). What is kept
+# is a digest: the last PITLANE_TIMING_LINES timestamped lines of the newest Worker_*.log, each cut
+# to 240 bytes, read from at most PITLANE_TIMING_BYTES of its tail, into PITLANE_TIMING_ROOT/<row>/
+# (root-only, 700), the newest PITLANE_TIMING_KEEP per row. _diag is the job's to write, so only a
+# regular file is read, never a symlink, and the digest is named here, not after the job's file. The
+# previous cycle's processes are gone by now (the unit stopped, so systemd emptied its cgroup), so
+# nothing writes the file while it is read. PITLANE_TIMING=off turns it off. It never stops a start:
+# the call below runs it in a subshell with the ERR trap and errexit off.
+keep_worker_timing() {
+  [ "${PITLANE_TIMING:-on}" = on ] || return 0
+  local diag="$dir/_diag" root="${PITLANE_TIMING_ROOT:-$POOL_ROOT/.timing}" keep="${PITLANE_TIMING_KEEP:-12}"
+  local src out
+  [ -d "$diag" ] && [ ! -L "$diag" ] || return 0
+  src=$(find "$diag" -maxdepth 1 -type f -name 'Worker_*.log' -printf '%T@ %f\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2-)
+  [ -n "$src" ] && [ -f "$diag/$src" ] && [ ! -L "$diag/$src" ] || return 0
+  mkdir -p -- "$root/$NAME" || return 0
+  [ ! -L "$root" ] && [ ! -L "$root/$NAME" ] || { log "timing: $root or its $NAME directory is a symlink; not kept"; return 0; }
+  [ "$(id -u)" != 0 ] || chown root:root -- "$root" "$root/$NAME"
+  chmod 700 -- "$root" "$root/$NAME"
+  out="$root/$NAME/$(date -u +%Y%m%dT%H%M%SZ).log"
+  tail -c "${PITLANE_TIMING_BYTES:-4194304}" -- "$diag/$src" 2>/dev/null \
+    | grep -a -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}Z ' \
+    | tail -n "${PITLANE_TIMING_LINES:-400}" | cut -c1-240 >"$out.part"
+  if [ -s "$out.part" ]; then mv -f -- "$out.part" "$out"; else rm -f -- "$out.part"; return 0; fi
+  ls -1 -- "$root/$NAME" | grep -E '^[0-9]{8}T[0-9]{6}Z\.log$' | sort -r | tail -n +"$((keep + 1))" \
+    | while read -r old; do rm -f -- "$root/$NAME/$old"; done
+}
+
 # ── 1. instance directory ─────────────────────────────────────────────────
 mkdir -p "$dir"
 [ ! -L "$dir" ] || fail "$dir is a symlink; refusing"
 chown "root:$user" "$dir"
 chmod 1770 "$dir"
+( trap - ERR; set +e; keep_worker_timing ) || true
 # Reset: everything except the root-owned runner copy and its pin marker goes. `rm -rf` on a
 # symlink removes the link, not what it points at, so a planted link is harmless here.
 find "$dir" -mindepth 1 -maxdepth 1 \

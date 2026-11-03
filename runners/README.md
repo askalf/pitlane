@@ -125,11 +125,11 @@ step the same way, as `.row`, so the manifest and the other host files the deplo
   App installs only on its owner, so an org gets a private App owned by the org. Until its two
   files are on the host every org row mints with `GH_ORG_RUNNER_TOKEN` (journal:
   `token GH_ORG_RUNNER_TOKEN`). To set one up:
-  1. Operator: in the org's settings (Developer settings, GitHub Apps, New GitHub App), create a
+  1. The host's admin, in the org's settings (Developer settings, GitHub Apps, New GitHub App), create a
      private App ("Only on this account"), webhook off, with one permission: Organization,
      **Self-hosted runners: Read and write**. Install it on the org (the repository choice does not
      matter: the App holds no repository permission) and generate a private key.
-  2. Operator, on the host as root: `/etc/askalf/gha-app.<org>.env` holding
+  2. The host's admin, on the host as root: `/etc/askalf/gha-app.<org>.env` holding
      `GHA_APP_ID=<the App's id>`, and the downloaded key as `/etc/askalf/gha-app.<org>.pem`,
      each root:root 600 (`install -m 600 -o root -g root <file> <path>`). One without the other
      fails loudly, and the rows keep the token file meanwhile.
@@ -229,7 +229,7 @@ node --test runners/gha-ondemand.test.mjs
    each becomes idle. No re-registration.
 3. `gha-runners-apply.sh bootstrap` to create the exec tier. Nothing starts until the
    org token file exists.
-4. Operator: give the org its own App (see "An org's own App" above), or give an org-scoped
+4. The host's admin: give the org its own App (see "An org's own App" above), or give an org-scoped
    fine-grained token the org permission above; write `/etc/askalf/gha-org.env` root:root 600 (the
    group ids, and the token if there is no App), then `apply` again; the OSS exec rows come up and show
    in the org's runner list while waiting for a job.

@@ -257,8 +257,8 @@ test('unclaimed queue: a build row online and idle beside the host-scripts deplo
   [r] = tickAt(t0 + T.unclaimedMs + 1, build({ workerMs: 1000 }));
   assert.equal(r.unclaimedMs, null);
   assert.equal(seen['app-build-e1'].unclaimedSince, null);
-  [r] = tickAt(t0 + 2, build());
-  [r] = tickAt(t0 + 3, build(), []);
+  tickAt(t0 + 2, build());
+  tickAt(t0 + 3, build(), []);
   assert.equal(seen['app-build-e1'].unclaimedSince, null, 'an empty queue resets it');
 });
 

@@ -27,6 +27,12 @@ export const ACCOUNTS = {
 };
 /** Accounts whose rows read a lane's key files (root:<account> 0640), so an isolated row keeps that group. */
 const LANES = new Set(['gha-oss', 'gha-oss-read', 'gha-oss-write', 'gha-redline']);
+/**
+ * The label of the job that reads a lane's key files, for a lane whose account also runs other read-tier
+ * work: a gha-redline row without the redline label (a fleet status row) takes no Redline job, so it
+ * holds no group (groups=none) and reads none of the Redline key files.
+ */
+const LANE_JOB_LABEL = { 'gha-redline': 'redline' };
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
@@ -130,8 +136,11 @@ export function configProblems(texts) {
       if (!iso) at('runners.manifest', r.n, `${name} runs as gha-exec, whose group opens every unisolated exec row's directory: list it in runners.isolated`);
       else if (iso.groups === 'gha-exec' || iso.groups === null) at('runners.isolated', iso.n, `${name} keeps gha-exec's group: give it groups=none or its lane's group`);
     } else if (LANES.has(r.user)) {
+      const job = LANE_JOB_LABEL[r.user];
+      const keyless = job && !r.labels.toLowerCase().split(',').includes(job);
       if (!iso) at('runners.manifest', r.n, `${name} runs as ${r.user}, whose group opens every unisolated ${r.user} row's directory: list it in runners.isolated`);
-      else if (iso.groups !== r.user) at('runners.isolated', iso.n, `${name} reads ${r.user}'s key files: give it groups=${r.user}`);
+      else if (keyless && iso.groups !== 'none') at('runners.isolated', iso.n, `${name} takes no ${job} job, so it reads none of ${r.user}'s key files: give it groups=none`);
+      else if (!keyless && iso.groups !== r.user) at('runners.isolated', iso.n, `${name} reads ${r.user}'s key files: give it groups=${r.user}`);
     }
   }
 

@@ -232,7 +232,9 @@ export function ownJobRecords(dir, rowsRoot) {
 /**
  * The numbers anyone may read (docs/showcase.md): the 24 h totals from summarize().all and
  * summarizeOutcomes(), and when given, the last hour (summarize().all over one hour) and the hour
- * buckets from hourly(). Nothing here names a repository or a row.
+ * buckets from hourly(). Nothing here names a repository or a row. Run and felt time come from the
+ * outcome record (runMs, feltMs), so they count the jobs that finished in the window, while the queue
+ * wait counts the jobs that started in it; every key a reader had before stays where it was.
  */
 export function publicStats(waits24, outcomes24, now, { lastHour, hours } = {}) {
   const stats = {
@@ -243,6 +245,9 @@ export function publicStats(waits24, outcomes24, now, { lastHour, hours } = {}) 
     targets: { ...TARGETS },
     finished: outcomes24?.n ?? null,
     runnerSuspect: outcomes24?.suspect?.n ?? null,
+    ran: outcomes24?.runMs?.n ?? null,
+    runMs: { p50: outcomes24?.runMs?.p50 ?? null, p90: outcomes24?.runMs?.p90 ?? null },
+    feltMs: { p50: outcomes24?.feltMs?.p50 ?? null, p90: outcomes24?.feltMs?.p90 ?? null },
   };
   if (lastHour) stats.lastHour = { jobs: lastHour.n ?? 0, p50: lastHour.p50 ?? null, p90: lastHour.p90 ?? null };
   if (hours) stats.hours = hours.map((h) => ({ from: new Date(h.from).toISOString(), jobs: h.n, p50: h.p50, p90: h.p90 }));
@@ -251,15 +256,21 @@ export function publicStats(waits24, outcomes24, now, { lastHour, hours } = {}) 
 
 const grouped = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-/** A shields.io endpoint badge for the 24 h median: green inside both targets, grey with no jobs. */
+/**
+ * A shields.io endpoint badge with two 24 h receipts, the median start (queue wait) and the median run:
+ * "start 2 s · run 18 s". The colour reads the start alone, against its targets: green inside both,
+ * grey with no jobs. With no run number yet the message is the start alone.
+ */
+export const BADGE_LABEL = 'CI measured';
 export function badgeDoc(stats) {
-  const base = { schemaVersion: 1, label: 'CI on pitlane', cacheSeconds: 300 };
+  const base = { schemaVersion: 1, label: BADGE_LABEL, cacheSeconds: 300 };
   const { p50, p90 } = stats?.queueWaitMs ?? {};
   if (!stats?.jobs || !Number.isFinite(p50)) return { ...base, message: 'no jobs in 24 h', color: 'lightgrey' };
   const color = p50 < TARGETS.p50Ms && p90 < TARGETS.p90Ms ? 'brightgreen'
     : p50 < TARGETS.p50Ms ? 'green'
       : p50 < 3 * TARGETS.p50Ms ? 'yellow' : 'orange';
-  return { ...base, message: `starts in ${fmtWait(p50)} (p50)`, color };
+  const run = stats?.runMs?.p50;
+  return { ...base, message: Number.isFinite(run) ? `start ${fmtWait(p50)} · run ${fmtWait(run)}` : `start ${fmtWait(p50)}`, color };
 }
 
 /** The 24 h half of the run-page line, "p50 2 s, p90 16 s across 1,240 jobs"; '' with no jobs. */
