@@ -7,8 +7,8 @@
 # job runs on every pull request and skips the fuzzing itself (reporting green) when no target or
 # code under a target changed, so it can be a required check without blocking unrelated changes.
 #
-# A public repository takes pull requests from forks, so this job runs on GitHub's runners only,
-# like every other job of this repository: no job here ever reaches a self-hosted row.
+# A public repository takes pull requests from forks, so the jobs added with this workflow (and
+# cflite.yml) run on GitHub's runners only: none of them ever reaches a self-hosted row.
 name: Fuzz
 
 on:

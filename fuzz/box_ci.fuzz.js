@@ -1,8 +1,10 @@
 // Fuzz box-ci's inputs: its JSON config, the --json log act writes while it runs a repository's
 // workflows (job and step names and matrix values come from the repository's workflow files), the
 // pull request and branch lists GitHub returns, and the secrets file. box-ci runs pull requests
-// from the repository itself on the host, so a workflow author controls the act log, and a throw
-// in these pure functions ends a poll cycle's handling of every run it was about to report.
+// from the repository itself on the host, so a workflow author controls the act log. A throw in the
+// act-log readers fails that run with an error status in place of its per-job statuses; a throw in
+// planRuns is caught per poll, so one malformed head keeps that repository's runs from being planned
+// until it goes; a throw in parseConfig is a startup failure without a message naming the field.
 // Contracts: parseConfig returns a config of the documented shape or throws an Error whose message
 // starts with "config:" (a JSON syntax error is the one other thing it may throw); parseActLog,
 // githubJobName, statusesFor, planRuns, buildEvent, scopeUnit and validateSecretFile never throw
