@@ -59,7 +59,8 @@ export function fuzz(data) {
     if (/[\u0000-\u001f\u007f]/.test(line)) fail('journalLine kept a control character');
     if (line.length > max) fail(`journalLine returned ${line.length} characters, over ${max}`);
     if (/\b(gh[opsu]_|github_pat_)[A-Za-z0-9_]+/.test(line)) fail('journalLine kept a token');
-    if (/\b(Bearer|token)\s+[A-Za-z0-9._~+/=-]{8,}/i.test(line)) fail('journalLine kept a bearer value');
+    // The cut-off marker is dots, which the bearer pattern's own character class also accepts.
+    if (/\b(Bearer|token)\s+[A-Za-z0-9._~+/=-]{8,}/i.test(line.replace(/\.\.\.$/, ''))) fail('journalLine kept a bearer value');
   }
 
   // Record readers, over damaged copies of valid records.

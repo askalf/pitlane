@@ -51,8 +51,9 @@
   known account; it now reports that no unit template runs as it.
 - box-ci threw on an act log whose `step`, `time` or matrix values were objects, on a config whose
   events, labels, branches, workflows or vars were objects, and on a pull request or branch head
-  whose sha or branch was not text. A config value that is not text is now a `config:` error; a
-  head that is not text is not planned.
+  whose sha or branch was not text. An object or list in one of those config fields is now a `config:`
+  error (a number or boolean is still converted to text, as before); a head that is not text is not
+  planned.
 - The supervisor threw on a `dispatcher.json` queue holding a non-object entry or non-text labels,
   and on a wait or outcome line whose `runner` was not text.
 
