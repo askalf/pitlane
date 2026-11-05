@@ -31,6 +31,31 @@
 - Rows for status-check jobs run on the read tier, off the exec tier's cap, with a second such row per
   repository so a burst of them does not queue behind one.
 
+### Fuzzing
+
+- Four Jazzer.js targets in `fuzz/` feed hostile input to the code that reads input pitlane does not
+  control: webhook deliveries (`webhook_delivery`), the runner config files (`runner_config`), the
+  act log and config box-ci reads (`box_ci`), and the host text and records the supervisor reads
+  back (`host_state`). `.github/workflows/fuzz.yml` runs them weekly, on demand, and on a pull
+  request that touches a target or the code under one (60 s per target; a pull request that touches
+  neither reports green without fuzzing). `node fuzz/run.mjs` runs the same targets locally. The
+  ClusterFuzzLite config in `.clusterfuzzlite/` backs a weekly coverage report (`cflite.yml`),
+  which cannot fuzz JavaScript; `fuzz.yml` is the fuzzer.
+
+### Fixes
+
+- A webhook delivery whose `workflow_job` fields are objects instead of text (`runner_name`,
+  `conclusion`, a step's `name` or `conclusion`, a timestamp) threw inside the dispatcher's request
+  handler. They now read as absent.
+- `runner-config.mjs` took a manifest account named `constructor`, `toString` or `__proto__` for a
+  known account; it now reports that no unit template runs as it.
+- box-ci threw on an act log whose `step`, `time` or matrix values were objects, on a config whose
+  events, labels, branches, workflows or vars were objects, and on a pull request or branch head
+  whose sha or branch was not text. A config value that is not text is now a `config:` error; a
+  head that is not text is not planned.
+- The supervisor threw on a `dispatcher.json` queue holding a non-object entry or non-text labels,
+  and on a wait or outcome line whose `runner` was not text.
+
 ### Docs
 
 - The README states exactly what is isolated and what is not, which modes keep state between jobs,

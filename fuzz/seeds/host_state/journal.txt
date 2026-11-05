@@ -1,0 +1,4 @@
+Started gha-ephemeral@row-1.service.
+gha-ephemeral@row-1.service: Failed with result exit-code.
+runner: auth failed with Bearer abcdefghijklmnop and ghp_0123456789abcdef end
+gha-ephemeral@row-1.service: Deactivated successfully.

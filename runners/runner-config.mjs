@@ -65,7 +65,7 @@ export function configProblems(texts) {
     if (manifest.has(name)) at(f, n, `${name} is listed twice`);
     if (!SCOPE.test(scope)) at(f, n, `${name}: scope ${scope} is not repo:<owner>/<repo>, org:<org> or pool:<owner>`);
     if (!['read', 'exec', 'build'].includes(tier)) at(f, n, `${name}: tier ${tier} is not read, exec or build`);
-    else if (!(user in ACCOUNTS)) at(f, n, `${name}: no unit template runs as ${user}`);
+    else if (!Object.hasOwn(ACCOUNTS, user)) at(f, n, `${name}: no unit template runs as ${user}`);
     else if (ACCOUNTS[user] !== tier) at(f, n, `${name}: ${user} serves the ${ACCOUNTS[user]} tier, not ${tier}`);
     if (!dir.startsWith('/')) at(f, n, `${name}: dir ${dir} is not an absolute path`);
     if (!LABELS.test(labels)) at(f, n, `${name}: labels do not start self-hosted,Linux,X64`);

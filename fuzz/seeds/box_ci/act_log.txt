@@ -1,0 +1,4 @@
+{"job":"CI/test (ubuntu)","jobID":"test","matrix":{"node":22,"os":"ubuntu"},"step":"build","stepResult":"failure","time":"2026-11-03T10:00:03Z","msg":"exit 1"}
+{"job":"CI/test (ubuntu)","jobID":"test","matrix":{"node":22,"os":"ubuntu"},"jobResult":"failure","time":"2026-11-03T10:00:09Z"}
+{"job":"CI/lint","jobID":"lint","step":"run","stepResult":"success","jobResult":"success","time":"2026-11-03T10:00:10Z"}
+not json at all

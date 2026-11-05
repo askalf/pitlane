@@ -1,0 +1,9 @@
+ActiveState=inactive
+SubState=dead
+Result=exit-code
+ExecMainStatus=1
+NRestarts=3
+UnitFileState=enabled
+InactiveEnterTimestamp=Tue 2026-11-03 10:00:00 UTC
+ControlGroup=/gha.slice/gha-ephemeral@row-1.service
+User=gha-exec

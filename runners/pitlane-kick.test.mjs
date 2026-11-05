@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
-import { classify, kickJob, kickServer, makeWaker, verifySignature } from './pitlane-kick.mjs';
+import { classify, jobTiming, kickJob, kickServer, makeWaker, verifySignature } from './pitlane-kick.mjs';
+import { jobOutcome } from './pitlane-outcomes.mjs';
 
 const SECRET = 'test-secret';
 const sign = (body, secret = SECRET) => `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
@@ -114,4 +115,32 @@ test('a kick ends the wait early; kicks within the gap of a tick start are held,
   const t1 = Date.now();
   await w.wait(5000);
   assert.ok(Date.now() - t1 < 1000);
+});
+
+// A delivery is JSON from the network. A field that is an object whose toString key is not a function
+// makes String(), a template literal and Date.parse() throw, and the server runs these readers inline
+// in its request handler, so a throw there is an uncaught exception in the dispatcher.
+test('a delivery with object-valued fields is read as plain data, never thrown on', () => {
+  const evil = { toString: 1 };
+  const job = {
+    id: 9, labels: ['self-hosted'], runner_name: evil, conclusion: evil, created_at: [evil], started_at: evil, completed_at: '2026-10-15T19:01:03Z',
+    steps: [{ name: evil, conclusion: evil }, { name: evil, conclusion: 'failure' }, { name: 'run', conclusion: evil }],
+  };
+  const text = (action) => JSON.stringify({ action, repository: { full_name: 'askalf/pitlane' }, workflow_job: job });
+  assert.equal(jobTiming('workflow_job', text('in_progress')), null, 'timestamps that are not strings do not parse');
+  const e = jobOutcome('workflow_job', text('completed'));
+  assert.equal(e.runner, '');
+  assert.equal(e.conclusion, '');
+  assert.equal(e.class, 'other');
+  const failed = jobOutcome('workflow_job', text('completed').replace('"conclusion":{"toString":1},"created_at"', '"conclusion":"failure","created_at"'));
+  assert.equal(failed.class, 'job-failed');
+  const lost = JSON.parse(text('completed'));
+  lost.workflow_job.conclusion = 'failure';
+  lost.workflow_job.steps = [{ name: evil, conclusion: evil }];
+  const l = jobOutcome('workflow_job', JSON.stringify(lost));
+  assert.equal(l.class, 'runner-lost-suspect');
+  assert.deepEqual(l.bad, [], 'a step conclusion that is not text names no failed step');
+  const timing = jobTiming('workflow_job', JSON.stringify({ action: 'in_progress', repository: { full_name: 'askalf/pitlane' }, workflow_job: { labels: ['self-hosted'], runner_name: evil, created_at: '2026-10-15T19:00:00Z', started_at: '2026-10-15T19:00:03Z' } }));
+  assert.equal(timing.runner, '');
+  assert.equal(timing.waitMs, 3000);
 });
