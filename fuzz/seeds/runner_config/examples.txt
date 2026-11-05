@@ -1,0 +1,75 @@
+# An example manifest: one row per runner registration (docs/pools.md, docs/ops-tier.md).
+# gha-runners-apply.sh reads it from /etc/askalf/gha-runners.manifest (GHA_MANIFEST) and reconciles
+# the host against it: systemd slices, per-unit drop-ins and, for a new row, its directory and
+# registration. runner-config.mjs checks this file and the four beside it together.
+#
+# Columns (whitespace-separated, no spaces inside a value):
+#   name    the runner name as registered on GitHub, and the instance of its unit
+#   scope   repo:<owner>/<repo>, org:<org> (an organization's runners), or pool:<owner> (a shared row
+#           that registers, at each start, for the repository of the job routed to it: docs/pools.md)
+#   tier    read  = reads code and posts reviews; never executes repository code
+#           exec  = executes repository code (test suites, builds)
+#           build = builds and deploys your own stack as root, behind the build guard (docs/ops-tier.md)
+#   user    the account the row runs as, which picks its unit template:
+#             gha-exec       exec,  your own repositories
+#             gha-oss        exec,  code you did not write (forks, candidates)
+#             gha-oss-read   read,  reads code you did not write
+#             gha-oss-write  read,  pushes to forks with a key no other row holds
+#             gha-redline    read,  the review gate
+#             root           build, the only tier that may run as root
+#   dir     the runner directory
+#   labels  runner labels; the first three are the implicit self-hosted,Linux,X64
+#   mode    ephemeral = one job per registration, JIT-configured at each start (the normal mode)
+#           adopt     = an existing runner: apply only assigns its slice, never re-registers it
+app-exec-e1      repo:example/app    exec   gha-exec     /srv/gha/app-exec-e1      self-hosted,Linux,X64,app-exec   ephemeral
+app-exec-e2      repo:example/app    exec   gha-exec     /srv/gha/app-exec-e2      self-hosted,Linux,X64,app-exec   ephemeral
+pool-e1          pool:example        exec   gha-exec     /srv/gha/pool-e1          self-hosted,Linux,X64,pool       ephemeral
+pool-e2          pool:example        exec   gha-exec     /srv/gha/pool-e2          self-hosted,Linux,X64,pool       ephemeral
+oss-1            org:example-forks   exec   gha-oss      /srv/gha/oss-1            self-hosted,Linux,X64,oss        ephemeral
+oss-read-1       org:example-forks   read   gha-oss-read /srv/gha/oss-read-1       self-hosted,Linux,X64,oss-read   ephemeral
+app-redline-e1   repo:example/app    read   gha-redline  /srv/gha/app-redline-e1   self-hosted,Linux,X64,redline    ephemeral
+app-build-e1     repo:example/app    build  root         /srv/gha/app-build-e1     self-hosted,Linux,X64,app-build  ephemeral
+# An example CPU shape (docs/cpu.md), read from /etc/askalf/runners.cpu (GHA_CPU). One row per line:
+# the row name, then options.
+#   cpus=N     pin the row to N CPUs (CPUAffinity=), so test runners and compilers size their worker
+#              pools from N and not from the whole host. Windows rotate by the row's position among
+#              the cpus= lines, so list a repository's rows together and add new ones at the end.
+#   weight=W   CPUWeight= (1 to 10000, systemd default 100) against the other rows of the same slice.
+# Every exec row has a line. A row not listed runs on every CPU at the default weight. After a change
+# run `gha-runners-apply.sh apply --restart-idle`.
+app-exec-e1  cpus=4
+app-exec-e2  cpus=4
+pool-e1      cpus=4
+pool-e2      cpus=4
+oss-1        cpus=2 weight=50
+# An example isolation list (docs/isolation.md), read from /etc/askalf/runners.isolated (GHA_ISOLATED).
+# Each listed row runs as its own account, gx-<row>, with its own tool cache. One row per line, then:
+#   groups=<g>|none   the row's supplementary group. A lane's rows keep the group of their tier account,
+#                     which alone reads that lane's key files; a row that reads no key file has none.
+#                     The tier group of gha-exec opens every unisolated exec row's directory, so no
+#                     listed exec row keeps it.
+#   account=gx-<n>    the account where gx-<row> would be over useradd's 32 characters.
+# A build row runs as root and cannot be listed (apply holds it).
+app-exec-e1      groups=none
+app-exec-e2      groups=none
+pool-e1          groups=none
+pool-e2          groups=none
+oss-1            groups=gha-oss
+oss-read-1       groups=gha-oss-read
+app-redline-e1   groups=gha-redline
+# An example list of retired rows (docs/pools.md, Retiring a row). One row per line:
+#   name      the row, as it was registered on GitHub and named its unit
+#   retired   the day it left the manifest (YYYY-MM-DD)
+#   why       free text to the end of the line
+# A row here is in none of runners.manifest, runners.cpu and runners.isolated. gha-runners-apply.sh
+# never removes a unit, so the host keeps a retired row's unit, drop-ins, directory, tool cache and
+# gx- account until a cleanup reads this file and removes exactly those.
+app-exec-e3      2026-01-15  folded into the pool: the repository's jobs start on pool rows as fast
+# An example build allow list (docs/ops-tier.md, Build guard), read from /etc/askalf/runners.build-allow
+# (PITLANE_BUILD_ALLOW). The build rows run as root, so pitlane-build-guard.sh stops any job before
+# its first step unless this list names its repository, branch and workflow file, and only push,
+# schedule and workflow_dispatch jobs run there at all. One `<owner/repo> <branch> <file>` per line;
+# # starts a comment. A workflow moving to a build label needs its line here, deployed, before its
+# first job there.
+example/app main deploy.yml
+example/app main nightly-backup.yml

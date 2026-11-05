@@ -23,6 +23,17 @@ for f in runners/*.sh canary/*.sh box-ci/*.sh; do bash -n "$f" || exit 1; done
 node runners/runner-config.mjs   # the example config is consistent
 ```
 
+Fuzzing (Jazzer.js, the only dependency, installed apart from the code by `npm ci --prefix .clusterfuzzlite`):
+
+```bash
+npm ci --prefix .clusterfuzzlite
+FUZZ_SECONDS=30 node fuzz/run.mjs   # every target; FUZZ_ONLY=box_ci for one
+```
+
+A target lives in `fuzz/<name>.fuzz.js` with starting inputs in `fuzz/seeds/<name>/`. A crash writes the
+reproducing input to `FUZZ_ARTIFACT_DIR` (default: the working directory); fix the code, add a
+regression test, and add the input to the target's seeds.
+
 The tests run the shell scripts against stub commands on `PATH` (`gh`, `systemctl`, `logger` and so
 on): no network, no root, no runner. A few tests read `/proc` and skip on systems without it.
 
@@ -43,7 +54,8 @@ Every pull request must pass these checks to merge:
 - `test` (ubuntu-latest, Node **22**): the unit tests, the shell parse check and the example config check
 - **CodeQL** static analysis
 
-OpenSSF Scorecard also runs on the repository.
+OpenSSF Scorecard also runs on the repository. The **Fuzz (Jazzer.js)** check fuzzes for a minute per target on a pull request
+that touches a fuzz target or the code under one, and reports green without fuzzing on any other.
 
 Redline, an automated reviewer, also reads each pull request once it is out of draft. It reports as
 the `review / redline` check and posts its verdict as a review from `sprayberry-redline`. A pull

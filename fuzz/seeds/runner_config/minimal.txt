@@ -1,0 +1,9 @@
+# The smallest working set: one repository, one ephemeral exec row (docs/example-minimal.md).
+# Columns: name scope tier user dir labels mode (runners/examples/runners.manifest explains each).
+app-exec-e1  repo:your-org/your-repo  exec  gha-exec  /srv/gha/app-exec-e1  self-hosted,Linux,X64,app-exec  ephemeral
+# Pin the row to 4 CPUs so test runners size their worker pools to that window (docs/cpu.md).
+app-exec-e1  cpus=4
+# The row runs as its own account with its own tool cache and no supplementary group (docs/isolation.md).
+app-exec-e1  groups=none
+# No retired rows yet (docs/pools.md, Retiring a row).
+# No build rows, so no workflow may run as root (docs/ops-tier.md, Build guard).

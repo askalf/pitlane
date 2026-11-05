@@ -418,5 +418,24 @@ console.log('\n=== the run queue ===');
     order.join() === 'askalf/sample@push@1,askalf/sample@push@2' && logged.includes('after run askalf/sample@push@1: disk full') && fragile.running === 0);
 }
 
+// Values from a workflow author or GitHub that are objects with a toString key which is not a function:
+// String(), a template literal and Date.parse() throw on them, so none may reach those.
+{
+  const evil = { toString: 1 };
+  const actEvil = parseActLog([
+    JSON.stringify({ job: 'CI/test', jobID: 'test', matrix: { os: evil, list: [evil, null, 1], n: 2 }, step: evil, stepResult: 'failure', time: evil }),
+    JSON.stringify({ job: 'CI/test', jobID: 'test', jobResult: 'failure', time: '2026-11-03T10:00:09Z' }),
+  ].join('\n'));
+  check('an act log with object-valued step, time and matrix fields is read without throwing', actEvil.length === 1 && actEvil[0].failedStep === null && actEvil[0].seconds === 0);
+  check('a matrix job name keeps String() text for a list and an object', githubJobName('test-1', 'test', { a: ['x', null, 1], b: { c: 1 } }) === 'test (x,,1, [object Object])');
+  check('a matrix job name with values that cannot be strings does not throw', githubJobName('test-1', 'test', { a: { toString: 1 }, b: [evil] }) === 'test ([object Object], [object Object])');
+  check('a config label that is not text is an Error naming it', throws(() => parseConfig({ repos: [{ repo: 'a/b', labels: [evil] }] }), /^config: a\/b: labels must be text/));
+  check('a config var that is not text is an Error naming it', throws(() => parseConfig({ repos: [{ repo: 'a/b', vars: { K: evil } }] }), /vars\.K must be text/));
+  check('a config event that is an object is an Error, not a TypeError', throws(() => parseConfig({ repos: [{ repo: 'a/b', events: [evil] }] }), /^config: a\/b: unsupported event \{"toString":1\}/));
+  const polled = planRuns(repoCfg, [{ head: { sha: evil, repo: { full_name: 'askalf/sample' } } }, { head: { sha: SHA, repo: { full_name: 'askalf/sample' } } }],
+    [{ branch: 'main', sha: [evil] }, { branch: evil, sha: SHA }, { branch: 'main', sha: SHA2 }], {}, new Set());
+  check('a pull request or branch head whose sha or branch is not text is not planned', polled.length === 2 && polled[0].sha === SHA && polled[1].sha === SHA2);
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
