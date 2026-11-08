@@ -43,6 +43,12 @@ const LOGS_KEPT = 200;
 // Pure decisions. Everything below the next divider does I/O.
 // ---------------------------------------------------------------------------------------------
 
+/** A config value as text; an object or list is an Error here, since String() of one can throw. */
+const configText = (v, what) => {
+  if (v !== null && typeof v === 'object') throw new Error(`config: ${what} must be text`);
+  return String(v);
+};
+
 /** The config with defaults filled in, or a thrown Error naming what is wrong. Pure. */
 export function parseConfig(raw) {
   const c = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -55,7 +61,7 @@ export function parseConfig(raw) {
     pollSeconds: Number.isInteger(c.pollSeconds) && c.pollSeconds >= 10 ? c.pollSeconds : 30,
     jobTimeoutMinutes: Number.isInteger(c.jobTimeoutMinutes) && c.jobTimeoutMinutes > 0 ? c.jobTimeoutMinutes : 30,
     contextPrefix: typeof c.contextPrefix === 'string' ? c.contextPrefix : 'box/',
-    labels: Array.isArray(c.labels) ? c.labels.map(String) : ['ubuntu-latest', 'ubuntu-24.04', 'self-hosted'],
+    labels: Array.isArray(c.labels) ? c.labels.map((l) => configText(l, 'labels')) : ['ubuntu-latest', 'ubuntu-24.04', 'self-hosted'],
     scope: c.scope !== false,
     slice: typeof c.slice === 'string' && /^[\w.-]+\.slice$/.test(c.slice) ? c.slice : 'gha-exec.slice',
     repos: [],
@@ -65,15 +71,15 @@ export function parseConfig(raw) {
     // A typo such as "serial": "yes" must not quietly mean parallel runs of a suite that cannot overlap.
     if (r.serial !== undefined && typeof r.serial !== 'boolean') throw new Error(`config: ${r.repo}: serial must be true or false`);
     const events = Array.isArray(r.events) ? r.events : ['pull_request', 'push'];
-    for (const e of events) if (e !== 'pull_request' && e !== 'push') throw new Error(`config: ${r.repo}: unsupported event ${e}`);
+    for (const e of events) if (e !== 'pull_request' && e !== 'push') throw new Error(`config: ${r.repo}: unsupported event ${JSON.stringify(e)}`);
     out.repos.push({
       repo: r.repo,
       events,
-      branches: Array.isArray(r.branches) ? r.branches.map(String) : ['main'],
-      labels: Array.isArray(r.labels) ? r.labels.map(String) : [],
-      vars: r.vars && typeof r.vars === 'object' ? Object.fromEntries(Object.entries(r.vars).map(([k, v]) => [k, String(v)])) : {},
+      branches: Array.isArray(r.branches) ? r.branches.map((b) => configText(b, `${r.repo}: branches`)) : ['main'],
+      labels: Array.isArray(r.labels) ? r.labels.map((l) => configText(l, `${r.repo}: labels`)) : [],
+      vars: r.vars && typeof r.vars === 'object' ? Object.fromEntries(Object.entries(r.vars).map(([k, v]) => [k, configText(v, `${r.repo}: vars.${k}`)])) : {},
       secretsFile: typeof r.secretsFile === 'string' ? r.secretsFile : null,
-      workflows: Array.isArray(r.workflows) ? r.workflows.map(String) : null,
+      workflows: Array.isArray(r.workflows) ? r.workflows.map((f) => configText(f, `${r.repo}: workflows`)) : null,
       // One run at a time for a repository whose suite binds fixed ports or shared paths on the host.
       serial: r.serial === true,
     });
@@ -234,11 +240,11 @@ export function planRuns(repoCfg, pulls, branchHeads, state, inflight) {
   };
   for (const pr of pulls ?? []) {
     const sha = pr?.head?.sha;
-    if (!sha || pr?.head?.repo?.full_name !== repoCfg.repo) continue;
+    if (typeof sha !== 'string' || !sha || pr?.head?.repo?.full_name !== repoCfg.repo) continue;
     if (want('pull_request', sha)) out.push({ event: 'pull_request', sha, pr });
   }
   for (const { branch, sha, previous } of branchHeads ?? []) {
-    if (sha && want('push', sha)) out.push({ event: 'push', sha, branch, previous: previous ?? null });
+    if (typeof sha === 'string' && sha && typeof branch === 'string' && want('push', sha)) out.push({ event: 'push', sha, branch, previous: previous ?? null });
   }
   return out;
 }
@@ -280,6 +286,9 @@ export function actArgs(cfg, repoCfg, run, { cachePath, secretFile, workflowPath
 /** Whether a run gets the repository's secrets: push only, and only when a file is configured. Pure. */
 export const getsSecrets = (repoCfg, run) => run.event === 'push' && !!repoCfg.secretsFile;
 
+/** A matrix value as the text String() gives it, without calling String() on an object: a key named toString makes that throw. */
+const matrixText = (v) => (Array.isArray(v) ? v.map((x) => (x === null ? '' : matrixText(x))).join(',') : v !== null && typeof v === 'object' ? '[object Object]' : String(v));
+
 /**
  * A job's name as GitHub shows it. act names a matrix job without a `name:` `<id>-<n>`, where
  * GitHub shows `<id> (<values>)`; act's log carries the values, in its own key order, which is
@@ -287,7 +296,7 @@ export const getsSecrets = (repoCfg, run) => run.event === 'push' && !!repoCfg.s
  * shows. Pure.
  */
 export function githubJobName(actName, jobID, matrix) {
-  const values = matrix && typeof matrix === 'object' ? Object.values(matrix).map(String) : [];
+  const values = matrix && typeof matrix === 'object' ? Object.values(matrix).map(matrixText) : [];
   if (jobID && values.length && new RegExp(`^${jobID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+$`).test(actName)) {
     return `${jobID} (${values.join(', ')})`;
   }
@@ -308,9 +317,9 @@ export function parseActLog(text) {
     const actName = e.job.includes('/') ? e.job.slice(e.job.indexOf('/') + 1) : e.job;
     const name = githubJobName(actName, typeof e.jobID === 'string' ? e.jobID : null, e.matrix);
     const j = jobs.get(e.job) ?? { name, result: null, failedStep: null, start: null, end: null };
-    const t = Date.parse(e.time);
+    const t = typeof e.time === 'string' ? Date.parse(e.time) : Number.NaN;
     if (Number.isFinite(t)) { j.start = j.start ?? t; j.end = t; }
-    if (e.stepResult === 'failure' && !j.failedStep) j.failedStep = e.step ?? null;
+    if (e.stepResult === 'failure' && !j.failedStep) j.failedStep = typeof e.step === 'string' ? e.step : null;
     if (typeof e.jobResult === 'string') j.result = e.jobResult;
     jobs.set(e.job, j);
   }

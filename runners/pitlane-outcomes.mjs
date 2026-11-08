@@ -24,6 +24,16 @@ const DAY_MS = 86400000;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 const FILE = /^outcomes-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
+/**
+ * A field of a delivery as text: a string, number or boolean is its text, anything else is ''. String() on
+ * an object throws when the body gave it a toString key that is not a function, and a delivery is
+ * JSON from the network, so a field never reaches String() or a template as an object.
+ */
+export const plainText = (v) => (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? String(v) : '');
+
+/** A timestamp field as epoch ms; NaN for anything but a string that parses (Date.parse coerces an object or a list through toString, which can throw). */
+export const parseTime = (v) => (typeof v === 'string' ? Date.parse(v) : Number.NaN);
+
 /** The class of a finished job from its workflow_job object. Pure, exported for tests. */
 export function classifyJob(j) {
   const c = j?.conclusion;
@@ -48,26 +58,26 @@ export function jobOutcome(event, body) {
   const j = p?.workflow_job;
   if (p?.action !== 'completed' || !Array.isArray(j?.labels) || !j.labels.includes('self-hosted')) return null;
   const repo = p?.repository?.full_name;
-  const completed = Date.parse(j.completed_at);
+  const completed = parseTime(j.completed_at);
   if (typeof repo !== 'string' || !Number.isFinite(j.id) || !Number.isFinite(completed)) return null;
-  const runner = String(j.runner_name ?? '');
-  const created = Date.parse(j.created_at);
-  const started = Date.parse(j.started_at);
+  const runner = plainText(j.runner_name);
+  const created = parseTime(j.created_at);
+  const started = parseTime(j.started_at);
   const cls = classifyJob(j);
   const e = {
     id: j.id,
     at: completed,
     repo,
     runner,
-    conclusion: String(j.conclusion ?? ''),
+    conclusion: plainText(j.conclusion),
     class: cls,
     waitMs: runner && Number.isFinite(created) && Number.isFinite(started) && started >= created ? started - created : null,
     runMs: runner && Number.isFinite(started) && completed >= started ? completed - started : null,
   };
   if (SUSPECT_CLASSES.includes(cls)) {
     e.bad = (Array.isArray(j.steps) ? j.steps : [])
-      .filter((s) => s?.conclusion && s.conclusion !== 'success' && s.conclusion !== 'skipped')
-      .slice(0, 4).map((s) => `${String(s.name ?? '').slice(0, 60)}:${s.conclusion}`);
+      .filter((s) => typeof s?.conclusion === 'string' && s.conclusion && s.conclusion !== 'success' && s.conclusion !== 'skipped')
+      .slice(0, 4).map((s) => `${plainText(s.name).slice(0, 60)}:${s.conclusion}`);
   }
   return e;
 }

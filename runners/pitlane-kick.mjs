@@ -5,7 +5,7 @@
 // secret, can cost one tick and one pool row's start, which parks when no job comes.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { jobOutcome } from './pitlane-outcomes.mjs';
+import { jobOutcome, parseTime, plainText } from './pitlane-outcomes.mjs';
 
 export const MAX_BODY = 256 * 1024;
 
@@ -61,14 +61,14 @@ export function jobTiming(event, body) {
   try { p = JSON.parse(body); } catch { return null; }
   const j = p?.workflow_job;
   if (p?.action !== 'in_progress' || !Array.isArray(j?.labels) || !j.labels.includes('self-hosted')) return null;
-  const created = Date.parse(j.created_at);
-  const started = Date.parse(j.started_at);
+  const created = parseTime(j.created_at);
+  const started = parseTime(j.started_at);
   const repo = p?.repository?.full_name;
   if (!Number.isFinite(created) || !Number.isFinite(started) || started < created || typeof repo !== 'string') return null;
   // runId and runAttempt let the job's own completed hook find its record (writeJobRecord).
   const runId = Number.isSafeInteger(j.run_id) ? j.run_id : null;
   const runAttempt = Number.isSafeInteger(j.run_attempt) ? j.run_attempt : null;
-  return { repo, runner: String(j.runner_name ?? ''), labels: j.labels, startedAt: started, waitMs: started - created, runId, runAttempt };
+  return { repo, runner: plainText(j.runner_name), labels: j.labels, startedAt: started, waitMs: started - created, runId, runAttempt };
 }
 
 /**

@@ -183,3 +183,11 @@ test('build-allow: three fields of the right shapes, no CR, once each', () => {
   assertOne(problemsWith(b, add('example/app main release.sh')), `${b}:${n}`, /release\.sh is not a workflow file name/);
   assertOne(problemsWith(b, add('example/app  main   deploy.yml')), `${b}:${n}`, /example\/app main deploy\.yml is listed twice/);
 });
+
+test('an account named like an inherited property is not an account', () => {
+  for (const user of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const p = problemsWith('runners.manifest', add(`row-x repo:askalf/pitlane exec ${user} /srv/gha/x self-hosted,Linux,X64 ephemeral`));
+    assert.ok(p.some((l) => l.includes(`row-x: no unit template runs as ${user}`)), `${user}: ${p.join(' | ')}`);
+    assert.ok(!p.some((l) => l.includes('serves the')), 'no message built from the inherited value');
+  }
+});
