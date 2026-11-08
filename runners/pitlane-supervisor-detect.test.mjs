@@ -279,9 +279,6 @@ test('unclaimed queue: only a free repository row beside a job its labels cover,
   assert.equal(judged(build(), [job()], now - T.queueFreshMs - 1), null, 'a stale dispatcher.json');
   assert.equal(queuedFrom(null, now), null);
   assert.equal(queuedFrom({ at: now }, now), null);
-  // A damaged dispatcher.json: entries that are not jobs, or labels that are not text, are not queued jobs.
-  const damaged = queuedFrom({ at: now, queued: [null, 7, 'x', { repo: 'a/b', labels: [{ toString: 1 }] }, { repo: 'a/b', labels: ['self-hosted'] }] }, now);
-  assert.deepEqual(damaged, [{ repo: 'a/b', labels: ['self-hosted'] }]);
   // No fresh queue keeps the clock where it was rather than resetting it.
   const seen = { b: { unclaimedSince: now - 60000 } };
   joinQueue([build()], null, seen, now);

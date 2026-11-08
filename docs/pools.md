@@ -53,6 +53,35 @@ Start at about one job per CPU of the slice. The queue-wait alert will fire duri
 burst that waits on the cap; read job duration next to it (`pitlane-outcomes`). `0` or
 unset turns the cap off.
 
+## The Redline cap
+
+Redline's review rows (read tier, label `redline`, one or more per repository) are not under `EXEC_CAP`, and a
+repository's rows are its limit on how many of its reviews run at once. A review is a checkout, a node process
+and remote model calls, so it needs a little memory and almost no CPU, but every busy row holds a runner
+listener, a worker and that process inside `gha-read.slice` (300% CPU, 3G), and a burst across many
+repositories could add up to more than the slice holds. `REDLINE_CAP` in the dispatcher's env is the target:
+how many `redline` rows hold a slot at once, across every repository, kept each tick and each webhook kick. A row holds a slot while it runs a job
+or idles unparked; a review that would need one more waits (counted in `held`, with `heldBy` in the tick's
+answer, and logged as `redline cap`), and an idle review listener is parked at once to make
+room while reviews wait. It is counted apart from the exec cap, and the fleet status rows (read tier, label
+`fleet-status`) are under neither. A Redline row is never warm (`WARM` is ignored for it): every running review
+listener, busy or idle, holds a slot, and an idle one takes a review only while fewer than the cap have one.
+
+It is a target, not a hard ceiling, because GitHub gives an idle listener a job on its own, between ticks. Review rows
+are started only below the cap, so in steady state the busy ones never pass it. What can pass it is idle review
+listeners already running above it, which exist only after the cap is lowered or when many rows are started
+together (a boot, an `apply`): the dispatcher parks the excess at its next tick or kick (at most `POLL_SEC`, 30 s by
+default), and a review that arrives before that can reach one. So busy rows are at most the cap plus the idle review
+listeners above it at that moment. In steady state that is 8 rows, about 2.8G of the slice's 3G at the estimate; right
+after an `apply` or a boot that starts every review row it is the number of rows for up to one tick, which the slice
+would not hold if reviews arrived in those seconds, so run `apply --restart-idle` while the review queue is quiet.
+
+Unset, `REDLINE_CAP` is 8, `DEFAULT_REDLINE_CAP` in the dispatcher: gha-read.slice allows 3G and a busy review row is
+taken as 350 MB (an estimate, not a measurement), which makes 8 the most that fit; a test keeps the default inside
+the slice's `MemoryMax`. So the review rows are never uncapped, whatever order the rows and the environment are
+changed in; only an explicit `REDLINE_CAP=0` turns it off. Read `pitlane-waits` for the redline label next to the
+slice's memory and set `REDLINE_CAP` to move it.
+
 ## Adding rows
 
 Add the rows to `runners.manifest`, deploy, then on the host run `gha-runners-apply.sh bootstrap`
@@ -100,8 +129,10 @@ start:
 
 1. The dispatcher routes a queued job to the pool when no row of its repository can take it now
    (none idle, none stopped) and a plain exec row of the repository covers it: a job no row runs
-   is not the pool's to guess at, and the fix lane's jobs (label `<repo>-fix`) stay on the fix
-   rows, the rows meant to hold that lane's key (isolation.md, Key files). It writes one entry per such job into
+   is not the pool's to guess at, the fix lane's jobs (label `<repo>-fix`) stay on the fix
+   rows, the rows meant to hold that lane's key (isolation.md, Key files), and a Dependabot job
+   (label `<repo>-deps`) stays on its row, because it runs a new dependency's code and a pool row
+   goes on to serve other repositories. It writes one entry per such job into
    `/run/askalf/pitlane/pool-queue/<job id>` (`repo:<owner>/<name> <labels>`) and starts one
    stopped pool row per job, under `EXEC_CAP` like any exec row. A verified webhook kick names
    its job, so every job of a burst is given its row before the next listing (`kickPlan`, in the

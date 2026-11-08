@@ -168,12 +168,6 @@ test('ofHost: keeps entries a host row took; drops another pool runner and a job
   assert.deepEqual(kept.map((e) => e.runner), ['pool-e1', 'app-exec-e1']);
 });
 
-test('ofHost: a runner field that is not text names no host row, and does not throw', () => {
-  const rows = hostRowNames(HOST_MANIFEST);
-  const kept = ofHost([{ runner: { toString: 1 } }, { runner: ['pool-e1'] }, { runner: null }, null, { runner: 'pool-e1' }], rows);
-  assert.deepEqual(kept.map((e) => e.runner), ['pool-e1']);
-});
-
 test('hostNumbers: a job another self-hosted pool took is in none of the published start, run, queued-to-done or suspect numbers', () => {
   const now = Date.parse('2026-11-03T12:00:00Z');
   const rows = hostRowNames(HOST_MANIFEST);

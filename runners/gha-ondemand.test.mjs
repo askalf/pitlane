@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { POOL_IDLE_MS, RateFloorError, appToken, claimOf, fileToken, tokensByOwner, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
+import { DEFAULT_REDLINE_CAP, REDLINE_ROW_MB, POOL_IDLE_MS, RateFloorError, appToken, claimOf, fileToken, tokensByOwner, clearedMarks, collectJobs, deployRecord, idleClock, kickPlan, limitPool, managedRows, plan, promised, readDeploy, recent, registeredIn, releaseRegistration, stateDoc, syncQueue, unitFor, watchedRows, writeState } from './gha-ondemand.mjs';
 
 test('the state document: every row with its unit reading and what the tick did to it, each queued job and where it went, the knobs, the budget, the events; and it serialises', () => {
   const state = {
@@ -476,6 +476,20 @@ pool-e1 pool:askalf exec gha-exec /srv/gha/pool-e1 self-hosted,Linux,X64,pool ep
   assert.deepEqual(plan(rows, {}, [{ id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-review'] }], { now: 0, idleMs: 10 * MIN }).start, ['app-review-e1']);
 });
 
+test('a Dependabot job stays on its own row: it waits for that row, never the pool', () => {
+  const rows = managedRows(`
+app-exec-e1 repo:askalf/app exec gha-exec /srv/gha/app-exec-e1 self-hosted,Linux,X64,app-exec ephemeral
+app-deps-e1 repo:askalf/app exec gha-exec /srv/gha/app-deps-e1 self-hosted,Linux,X64,app-deps ephemeral
+pool-e1 pool:askalf exec gha-exec /srv/gha/pool-e1 self-hosted,Linux,X64,pool ephemeral
+`);
+  const allBusy = { 'app-exec-e1': busy, 'app-deps-e1': busy };
+  const one = (labels) => plan(rows, allBusy, [{ id: 9, repo: 'askalf/app', labels }], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual(one(['self-hosted', 'app-exec']).start, ['pool-e1'], 'the repository\'s plain jobs still reach the pool');
+  assert.deepEqual(one(['self-hosted', 'app-deps']), { start: [], park: [], room: [], held: 0, queue: [] });
+  assert.deepEqual(kickPlan(rows, allBusy, { id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-deps'] }), { queue: false, start: null, take: null });
+  assert.deepEqual(plan(rows, {}, [{ id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-deps'] }], { now: 0, idleMs: 10 * MIN }).start, ['app-deps-e1']);
+});
+
 test('pool starts count against the exec cap and are held like any other; held jobs keep their entries', () => {
   const r = plan(POOLED, { 'ci-exec-e1': busy, 'dario-exec-e1': busy }, [ciJob, { ...ciJob, id: 102 }], { now: 0, idleMs: 10 * MIN, execCap: 3 });
   assert.deepEqual(r.start, ['pool-e1']);
@@ -680,4 +694,146 @@ test('an App token is minted per permission set: the release token never stands 
   assert.equal(await appToken(owner, { run }), 'tok:-,actions=read', 'the listing token from the memo');
   assert.equal(await appToken(owner, { run, ask: ['ci', 'administration=write'] }), 'tok:ci,administration=write', 'the release token from the memo');
   assert.deepEqual(asked, [`${owner} - actions=read`, `${owner} ci administration=write`]);
+});
+
+// ---- the Redline cap -------------------------------------------------------------------------------
+// Review rows (read tier, label redline) have a ceiling of their own, counted apart from the exec rows;
+// the fleet status rows (read tier, label fleet-status) are under neither cap.
+const REDLINED = managedRows(`
+dario-exec-e1 repo:askalf/dario exec gha-exec /srv/gha/dario-exec-e1 self-hosted,Linux,X64,dario-exec ephemeral
+dario-redline-e1 repo:askalf/dario read gha-redline /srv/gha/dario-redline-e1 self-hosted,Linux,X64,redline ephemeral
+dario-redline-e2 repo:askalf/dario read gha-redline /srv/gha/dario-redline-e2 self-hosted,Linux,X64,redline ephemeral
+dario-redline-e3 repo:askalf/dario read gha-redline /srv/gha/dario-redline-e3 self-hosted,Linux,X64,redline ephemeral
+cordon-redline-e1 repo:askalf/cordon read gha-redline /srv/gha/cordon-redline-e1 self-hosted,Linux,X64,redline ephemeral
+cordon-redline-e2 repo:askalf/cordon read gha-redline /srv/gha/cordon-redline-e2 self-hosted,Linux,X64,redline ephemeral
+dario-status-e1 repo:askalf/dario read gha-redline /srv/gha/dario-status-e1 self-hosted,Linux,X64,fleet-status ephemeral
+`);
+const review = (repo) => job(repo, 'redline');
+
+test('no redline cap (0) starts a row for every queued review, as before', () => {
+  const r = plan(REDLINED, {}, [review('askalf/dario'), review('askalf/dario'), review('askalf/dario'), review('askalf/cordon')], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual(r.start, ['dario-redline-e1', 'dario-redline-e2', 'dario-redline-e3', 'cordon-redline-e1']);
+  assert.equal(r.held, 0);
+  assert.equal('heldBy' in r, false, 'the answer keeps its old shape without a cap');
+});
+
+test('the redline cap stops review starts at the cap, across repositories, and says how many it holds', () => {
+  const state = { 'dario-redline-e1': busy };
+  const queued = [review('askalf/dario'), review('askalf/cordon'), review('askalf/cordon')];
+  const r = plan(REDLINED, state, queued, { now: 0, idleMs: 10 * MIN, redlineCap: 2 });
+  assert.deepEqual(r.start, ['dario-redline-e2']);
+  assert.equal(r.held, 2);
+  assert.deepEqual(r.heldBy, { exec: 0, redline: 2 });
+});
+
+test('the redline cap and the exec cap are separate: neither holds the other, and status rows are under neither', () => {
+  const state = { 'dario-exec-e1': busy, 'dario-redline-e1': busy };
+  // Exec at its cap of 1 does not hold a review; redline at its cap of 1 does not hold an exec job or a status job.
+  let r = plan(REDLINED, { 'dario-exec-e1': busy }, [review('askalf/cordon')], { now: 0, idleMs: 10 * MIN, execCap: 1, redlineCap: 1 });
+  assert.deepEqual(r.start, ['cordon-redline-e1']);
+  r = plan(REDLINED, state, [job('askalf/dario', 'dario-exec'), job('askalf/dario', 'fleet-status')], { now: 0, idleMs: 10 * MIN, execCap: 2, redlineCap: 1 });
+  assert.deepEqual(r.start, ['dario-status-e1']);
+  assert.equal(r.held, 0);
+  r = plan(REDLINED, state, [review('askalf/cordon')], { now: 0, idleMs: 10 * MIN, execCap: 2, redlineCap: 1 });
+  assert.deepEqual(r.start, []);
+  assert.deepEqual(r.heldBy, { exec: 0, redline: 1 });
+});
+
+test('an idle review listener is parked at once to make room while reviews wait at the cap, and not otherwise', () => {
+  const idle = { active: true, busy: false, idleSince: 0 };
+  const state = { 'dario-redline-e1': idle, 'cordon-redline-e1': busy };
+  // dario's idle listener (idle 40 s) holds one of two slots; cordon's review needs a stopped cordon row.
+  let r = plan(REDLINED, state, [review('askalf/cordon')], { now: 40000, idleMs: 10 * MIN, redlineCap: 2 });
+  // Both slots held and a review waiting: the idle listener is parked to make room, the review starts.
+  assert.deepEqual(r.room, ['dario-redline-e1']);
+  assert.deepEqual(r.park, ['dario-redline-e1']);
+  assert.deepEqual(r.start, [], 'the replacement waits for the park');
+  assert.equal(r.held, 1);
+  // Under the cap nothing is parked early: the idle listener waits out its idle time.
+  r = plan(REDLINED, state, [review('askalf/cordon')], { now: 40000, idleMs: 10 * MIN, redlineCap: 3 });
+  assert.deepEqual(r.room, []);
+  assert.deepEqual(r.park, []);
+  assert.deepEqual(r.start, ['cordon-redline-e2']);
+});
+
+test('kickPlan: a review row starts at the kick under the redline cap and is held at it; the exec cap does not touch it', () => {
+  const j = review('askalf/dario');
+  assert.deepEqual(kickPlan(REDLINED, { 'dario-redline-e1': busy }, j, { redlineCap: 3, redlineLoad: 1 }), { queue: false, start: 'dario-redline-e2', take: 'dario-redline-e2' });
+  assert.deepEqual(kickPlan(REDLINED, { 'dario-redline-e1': busy }, j, { redlineCap: 3, redlineLoad: 3 }), { queue: false, start: null, take: null });
+  assert.deepEqual(kickPlan(REDLINED, { 'dario-redline-e1': busy }, j, { execCap: 1, load: 1 }), { queue: false, start: 'dario-redline-e2', take: 'dario-redline-e2' });
+  assert.deepEqual(kickPlan(REDLINED, {}, job('askalf/dario', 'fleet-status'), { redlineCap: 1, redlineLoad: 1 }), { queue: false, start: 'dario-status-e1', take: 'dario-status-e1' });
+});
+
+test('a Redline row is never warm: warm names are ignored for it, and every running review listener holds a slot', () => {
+  const idle = { active: true, busy: false, idleSince: 0 };
+  // Two warm, running, idle review listeners at a cap of 1: both count, so another repository's review is not started
+  // on top of them; they are parked at once, warm or not, and the review then has its slot.
+  const state = { 'dario-redline-e1': idle, 'dario-redline-e2': idle };
+  const r = plan(REDLINED, state, [review('askalf/cordon')], { now: 5000, idleMs: 10 * MIN, warm: ['dario-redline-e1', 'dario-redline-e2'], redlineCap: 1 });
+  assert.deepEqual(r.room.sort(), ['dario-redline-e1', 'dario-redline-e2']);
+  // The review's row is not started in the tick that parks the listeners: the next tick, which finds them gone, starts it.
+  assert.deepEqual(r.start, []);
+  assert.equal(r.held, 1);
+  const next = plan(REDLINED, {}, [review('askalf/cordon')], { now: 10000, idleMs: 10 * MIN, redlineCap: 1 });
+  assert.deepEqual(next.start, ['cordon-redline-e1']);
+  // A warm name does not start a stopped review row either.
+  let r2 = plan(REDLINED, {}, [], { now: 0, idleMs: 10 * MIN, warm: ['dario-redline-e1'], redlineCap: 1 });
+  assert.deepEqual(r2.start, []);
+  // Exec rows are still warm as before.
+  r2 = plan(REDLINED, {}, [], { now: 0, idleMs: 10 * MIN, warm: ['dario-exec-e1'], redlineCap: 1 });
+  assert.deepEqual(r2.start, ['dario-exec-e1']);
+});
+
+test('the default Redline cap is on when REDLINE_CAP is unset and sits inside the read slice\'s memory limit', () => {
+  const slice = readFileSync(new URL('./gha-read.slice', import.meta.url), 'utf8');
+  const gb = Number(/^MemoryMax=(\d+)G$/m.exec(slice)?.[1]);
+  assert.ok(gb > 0, 'gha-read.slice sets MemoryMax in whole gigabytes');
+  assert.ok(DEFAULT_REDLINE_CAP > 0, 'unset means capped');
+  assert.ok(DEFAULT_REDLINE_CAP * REDLINE_ROW_MB <= gb * 1024, `${DEFAULT_REDLINE_CAP} busy review rows at ${REDLINE_ROW_MB} MB fit in ${gb}G`);
+  assert.ok((DEFAULT_REDLINE_CAP + 1) * REDLINE_ROW_MB > gb * 1024, 'and it is the largest whole number that does');
+  // The dispatcher reads it so: only a whole number replaces it, and 0 is the one off switch.
+  const src = readFileSync(new URL('./gha-ondemand.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('? Number(env.REDLINE_CAP) : DEFAULT_REDLINE_CAP;'), 'a REDLINE_CAP that is not a whole number is the default, not off');
+});
+
+test('two kicks cannot put two reviews on two idle listeners at a cap of one, warm or not', () => {
+  const idle = { active: true, busy: false, idleSince: 0 };
+  let state = { 'dario-redline-e1': idle, 'dario-redline-e2': idle };
+  const j = review('askalf/dario');
+  const first = kickPlan(REDLINED, state, j, { redlineCap: 1, redlineLoad: 2 });
+  assert.equal(first.take, 'dario-redline-e1');
+  state = promised(state, first, j.repo);
+  // The first review holds its row; the second finds the cap spent although another listener sits idle.
+  assert.deepEqual(kickPlan(REDLINED, state, j, { redlineCap: 1, redlineLoad: 2 }), { queue: false, start: null, take: null });
+  // The tick's plan agrees: with one review running and a second waiting, the idle listener is not handed it.
+  const r = plan(REDLINED, state, [j], { now: 5000, idleMs: 10 * MIN, warm: ['dario-redline-e2'], redlineCap: 1 });
+  assert.deepEqual(r.start, []);
+  assert.equal(r.held, 1);
+});
+
+test('idle review listeners above the cap are parked at once, with no review waiting, the oldest first; at or under the cap nothing is', () => {
+  const idle = (since) => ({ active: true, busy: false, idleSince: since });
+  const four = { 'dario-redline-e1': idle(100), 'dario-redline-e2': idle(300), 'dario-redline-e3': idle(200), 'cordon-redline-e1': idle(400) };
+  let r = plan(REDLINED, four, [], { now: 1000, idleMs: 10 * MIN, redlineCap: 2 });
+  assert.deepEqual(r.room, ['dario-redline-e1', 'dario-redline-e3'], 'two over the cap, the two idle longest');
+  assert.deepEqual(r.park, r.room);
+  assert.deepEqual(r.start, []);
+  // A row with a job is never chosen, and a row held (its repository could not be listed) is left alone.
+  r = plan(REDLINED, { ...four, 'dario-redline-e1': busy }, [], { now: 1000, idleMs: 10 * MIN, redlineCap: 2, hold: ['dario-redline-e3'] });
+  assert.deepEqual(r.room, ['dario-redline-e2', 'cordon-redline-e1']);
+  // At the cap, or with the cap off, nothing is parked early.
+  assert.deepEqual(plan(REDLINED, four, [], { now: 1000, idleMs: 10 * MIN, redlineCap: 4 }).room, []);
+  assert.deepEqual(plan(REDLINED, four, [], { now: 1000, idleMs: 10 * MIN }).room, []);
+});
+
+test('a lowered cap with one busy and one idle review row and no stopped row: the review waits, the idle listener is parked, and it is held', () => {
+  // Cap 1; dario's three review rows: one with a job, one idle, one with a job too (no stopped row left to start).
+  const idle = { active: true, busy: false, idleSince: 0 };
+  const state = { 'dario-redline-e1': busy, 'dario-redline-e2': idle, 'dario-redline-e3': busy };
+  const r = plan(REDLINED, state, [review('askalf/dario')], { now: 1000, idleMs: 10 * MIN, redlineCap: 1 });
+  assert.deepEqual(r.start, []);
+  assert.deepEqual(r.park, ['dario-redline-e2'], 'the excess idle listener leaves GitHub before it can be given the review');
+  assert.deepEqual(r.room, ['dario-redline-e2']);
+  assert.equal(r.held, 1, 'held, so the finish of a running review wakes the dispatcher');
+  assert.deepEqual(r.heldBy, { exec: 0, redline: 1 });
 });

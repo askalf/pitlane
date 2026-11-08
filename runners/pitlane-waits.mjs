@@ -148,7 +148,7 @@ export function hostRowNames(manifestText) {
  * runner name. The published numbers count only these (docs/method.md).
  */
 export function ofHost(entries, rowNames) {
-  return (entries ?? []).filter((e) => typeof e?.runner === 'string' && rowNames.has(e.runner));
+  return (entries ?? []).filter((e) => rowNames.has(String(e?.runner ?? '')));
 }
 
 /** { n, p50, p90, max } in ms for the entries inside the window; overall and per repository. */

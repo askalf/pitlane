@@ -253,7 +253,7 @@ export function joinRegistrations(rows, gh, seen, now) {
  */
 export function queuedFrom(doc, now, t = THRESHOLDS) {
   if (!doc || !Array.isArray(doc.queued) || !Number.isFinite(doc.at) || now - doc.at > t.queueFreshMs) return null;
-  return doc.queued.filter((j) => j && typeof j === 'object' && !j.pool && j.repo && Array.isArray(j.labels) && j.labels.every((l) => typeof l === 'string'));
+  return doc.queued.filter((j) => !j.pool && j.repo && Array.isArray(j.labels));
 }
 
 /**

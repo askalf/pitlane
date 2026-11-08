@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 # Root: it starts and stops the runner units, and reads the host's GitHub token file.
 ExecStart=/usr/bin/node /opt/askalf/gha-ondemand.mjs
-# MODE=on to act (the default, dry, only logs), and optionally POLL_SEC, IDLE_MIN, WARM, EXEC_CAP, POOL_MAX.
+# MODE=on to act (the default, dry, only logs), and optionally POLL_SEC, IDLE_MIN, WARM, EXEC_CAP, REDLINE_CAP, POOL_MAX.
 # HOOK_SECRET (and HOOK_PORT) turn on the loopback webhook that cuts the poll wait short.
 EnvironmentFile=-/etc/askalf/gha-ondemand.env
 # dispatcher.json, dispatcher.beat and waits.jsonl are 0640 to this group (gid 1001, the dashboard's), and no other account reads them (docs/isolation.md, Host state files).

@@ -41,6 +41,13 @@
 // WARM names rows kept running whatever the queue says (comma-separated).
 // EXEC_CAP (0, off, by default) is how many exec-tier rows may hold a job slot at once across every
 // repository, so a burst of pushes queues behind the cap instead of running every job at once on the host's few CPUs.
+// REDLINE_CAP is the same limit for the Redline review rows (read tier, label `redline`), counted apart
+// from the exec rows: reviews wait for a model, not a CPU, so many can run at once, but each holds a runner,
+// a checkout and a node process in gha-read.slice, which has a few GB. Unset (or not a number) it is
+// DEFAULT_REDLINE_CAP, sized from that slice's memory limit, so the dispatcher never runs the review rows
+// uncapped; `0` is the one way to turn it off. A Redline row is never kept warm (WARM does not apply to
+// them): every running review listener, busy or idle, holds a slot. Other read-tier rows (the fleet status
+// rows) are under neither cap.
 // The GitHub token is the runner GitHub App's installation token for each repository's owner
 // (gha-app-token.sh), whose calls count against the App's own budget; where the App has none, it is
 // the host's GitHub token (its token file), shared with other GitHub pollers on the host. Either is
@@ -118,6 +125,18 @@ export function watchedRows(manifestText) {
 const covers = (row, job) => job.labels.every((l) => row.labels.includes(String(l).toLowerCase()));
 
 const isExec = (row) => row?.tier === 'exec';
+/** A Redline review row: read tier, the `redline` label. The status rows and the pool are not. */
+const isRedline = (row) => row?.tier === 'read' && Array.isArray(row.labels) && row.labels.includes('redline');
+/**
+ * The Redline ceiling when REDLINE_CAP is not set: gha-read.slice allows 3G (MemoryMax in gha-read.slice),
+ * and a busy review row (runner listener, worker, the review's node process and its checkout) is taken as
+ * REDLINE_ROW_MB of it, so 3072 / 350 = 8 rows. The figure is an estimate, not a measurement; the test
+ * keeps the default inside the slice's limit if either number moves.
+ */
+export const REDLINE_ROW_MB = 350;
+export const DEFAULT_REDLINE_CAP = 8;
+/** The cap class a row's job slot is counted in, or null for a row no cap counts. */
+const capClass = (row) => (isExec(row) ? 'exec' : isRedline(row) ? 'redline' : null);
 const isPool = (row) => Boolean(row?.pool);
 /**
  * The pool rows that may serve a job: those of its repository's owner, for a job one of the
@@ -125,8 +144,10 @@ const isPool = (row) => Boolean(row?.pool);
  * guess at, and a lane's jobs (label <repo>-fix for the fix lane, <repo>-review for the review
  * lane) stay on that lane's rows: those are the only rows in the group that reads the lane's key
  * (docs/isolation.md, Key files), so a pool job, which may come from any repository, never can.
+ * A Dependabot job (label <repo>-deps) stays on its row the other way round: it runs a new
+ * dependency's code, and a pool row goes on to serve other repositories' jobs, secrets included.
  */
-const LANE_LABEL = /-(fix|review)$/;
+const LANE_LABEL = /-(fix|review|deps)$/;
 const poolFor = (rows, job) => {
   const plain = rows.some((r) => r.repo === job.repo && isExec(r) && covers(r, job) && !r.labels.some((l) => LANE_LABEL.test(l)));
   return plain ? rows.filter((r) => isPool(r) && job.repo.startsWith(`${r.pool}/`)) : [];
@@ -152,6 +173,14 @@ export function limitPool(rows, max) {
  * While jobs wait, an idle exec listener no queued job can use, not warm and idle for pressureIdleMs,
  * is parked at once to make room (also listed in `room`). An idle warm listener holds no slot until
  * it takes a job, so the warm exec rows can carry the count past the cap by at most their number.
+ * `redlineCap` is a target kept each tick, not a hard ceiling: GitHub gives an idle listener a job on its own, between
+ * ticks. Review rows are started only below it, so they stay at or under it in steady state; idle review listeners
+ * above it (the cap lowered, or the rows started together) are parked at once, and until that park a job can reach
+ * one of them. It does the same for the Redline review rows, with its own count: a Redline row holds a
+ * slot while it runs a job or idles unparked, a queued review waits when redlineCap are held, and an
+ * idle Redline listener is parked at once to make room. The room is not counted free in the same answer:
+ * the park comes first and the review's row starts in a later tick that finds the listener gone, so the
+ * cap is never passed while the actions of one tick are applied. `heldBy` says how many of `held` waited on each.
  *
  * A job that no row of its repository can take now (none idle, none stopped: all busy, or already
  * given to an earlier job this tick) goes to the pool, when pool rows of its owner exist: it is
@@ -163,16 +192,26 @@ export function limitPool(rows, max) {
  * are never warm. Pure, exported for tests.
  */
 export const POOL_IDLE_MS = 45000;
-export function plan(rows, state, queued, { now, idleMs, warm = [], hold = [], execCap = 0, pressureIdleMs = 30000, poolIdleMs = POOL_IDLE_MS }) {
+export function plan(rows, state, queued, { now, idleMs, warm: warmAsked = [], hold = [], execCap = 0, redlineCap = 0, pressureIdleMs = 30000, poolIdleMs = POOL_IDLE_MS }) {
   const start = [];
   const park = [];
   const room = [];
   const queue = [];
   const byName = new Map(rows.map((r) => [r.name, r]));
+  // A Redline row is never warm: a warm idle listener is not counted as holding a slot, which would let
+  // the cap be passed by the warm rows, so the name is ignored and the row parks like any other when idle.
+  const warm = warmAsked.filter((n) => !isRedline(byName.get(n)));
   const free = new Set(rows.filter((r) => state[r.name]?.active && !state[r.name]?.busy).map((r) => r.name));
   // A row the supervisor holds after a crash loop is never started from here, warm or not.
   const stopped = new Set(rows.filter((r) => !state[r.name]?.active && !state[r.name]?.held).map((r) => r.name));
-  let load = rows.filter((r) => isExec(r) && state[r.name]?.active && (state[r.name]?.busy || !warm.includes(r.name))).length;
+  const caps = { exec: execCap, redline: redlineCap };
+  // The class a row's slot is counted in, only while that class has a cap.
+  const capped = (row) => { const c = capClass(row); return c && caps[c] > 0 ? c : null; };
+  const loads = { exec: 0, redline: 0 };
+  for (const r of rows) {
+    const c = capClass(r);
+    if (c && state[r.name]?.active && (state[r.name]?.busy || !warm.includes(r.name))) loads[c] += 1;
+  }
   const idleFor = (name) => {
     const since = state[name]?.idleSince;
     return since === null || since === undefined ? -1 : now - since;
@@ -187,12 +226,23 @@ export function plan(rows, state, queued, { now, idleMs, warm = [], hold = [], e
   // startUnit resets it, and a start that works ends the failed state.
   const firstStopped = (cands) => cands.find((r) => stopped.has(r.name) && state[r.name]?.raw !== 'failed') ?? cands.find((r) => stopped.has(r.name));
   const waiting = [];
+  // Review rows with a job: an idle review listener takes a review only while fewer than redlineCap have one,
+  // so listeners left running past a lowered cap cannot carry more reviews than the cap allows.
+  let busyRedline = rows.filter((r) => isRedline(r) && state[r.name]?.active && state[r.name]?.busy).length;
+  const overRedline = (r) => isRedline(r) && redlineCap > 0 && busyRedline >= redlineCap;
   for (const job of queued) {
     const fits = rows.filter((r) => r.repo === job.repo && covers(r, job));
-    const idle = fits.find((r) => free.has(r.name));
+    const idle = fits.find((r) => free.has(r.name) && !overRedline(r));
+    if (!idle && fits.some((r) => free.has(r.name))) {
+      // An idle review listener the cap will not hand this review: the review waits on the cap, with or
+      // without a stopped row to start, and the excess idle listener is parked below before GitHub gives it a job.
+      waiting.push({ cls: 'redline', candidates: fits });
+      continue;
+    }
     if (idle) {
       free.delete(idle.name);
-      if (isExec(idle) && warm.includes(idle.name)) load += 1;
+      if (isRedline(idle)) busyRedline += 1;
+      if (capClass(idle) && warm.includes(idle.name)) loads[capClass(idle)] += 1;
       continue;
     }
     let off = firstStopped(fits);
@@ -211,43 +261,66 @@ export function plan(rows, state, queued, { now, idleMs, warm = [], hold = [], e
       candidates = pool;
     }
     // Under the cap, exec starts are decided after the room-making parks below, in queue order.
-    if (execCap > 0 && isExec(off)) {
-      waiting.push(candidates);
+    const cls = capped(off);
+    if (cls) {
+      waiting.push({ cls, candidates });
       continue;
     }
     stopped.delete(off.name);
     start.push(off.name);
   }
-  const short = waiting.length - Math.max(0, execCap - load);
-  if (short > 0) {
+  for (const cls of ['exec', 'redline']) {
+    if (!(caps[cls] > 0)) continue;
+    // Redline slots can be over the cap (listeners started before it was lowered, or the rows started together), and
+    // then the excess is parked whether or not a review waits (waiting is zero, left is negative), and a waiting review
+    // needs it parked as well as its own slot; the exec count has always been clamped at zero.
+    const left = cls === 'redline' ? caps[cls] - loads[cls] : Math.max(0, caps[cls] - loads[cls]);
+    const short = waiting.filter((w) => w.cls === cls).length - left;
+    if (short <= 0) continue;
+    // An idle review listener is parked as soon as a review waits on the cap: it is registered with GitHub, which
+    // would give it the job; an idle exec listener gets pressureIdleMs first, as it always has.
     const spare = [...free]
-      .filter((name) => isExec(byName.get(name)) && !warm.includes(name) && !hold.includes(name) && idleFor(name) >= pressureIdleMs)
+      .filter((name) => capClass(byName.get(name)) === cls && !warm.includes(name) && !hold.includes(name) && idleFor(name) >= (cls === 'redline' ? 0 : pressureIdleMs))
       .sort((a, b) => idleFor(b) - idleFor(a))
       .slice(0, short);
     for (const name of spare) {
       free.delete(name);
       park.push(name);
       room.push(name);
-      load -= 1;
+      // An exec listener's slot is free once it is chosen (as it always was). A review listener's is not until the
+      // park has happened: the host stops it after this answer, may find it busy and keep it, and a unit that is
+      // stopping still counts as running, so a replacement waits for a later tick that sees it gone (`held`).
+      if (cls !== 'redline') loads[cls] -= 1;
     }
   }
   let held = 0;
-  for (const fits of waiting) {
+  const heldBy = { exec: 0, redline: 0 };
+  for (const { cls, candidates: fits } of waiting) {
     const off = firstStopped(fits);
-    if (!off) continue;
-    if (load >= execCap) {
+    if (!off) {
+      // Nothing to start: a review the cap turned away from an idle listener is still held, so the finish of a
+      // running review wakes the dispatcher.
+      if (loads[cls] >= caps[cls]) {
+        held += 1;
+        heldBy[cls] += 1;
+      }
+      continue;
+    }
+    if (loads[cls] >= caps[cls]) {
       held += 1;
+      heldBy[cls] += 1;
       continue;
     }
     stopped.delete(off.name);
     start.push(off.name);
-    load += 1;
+    loads[cls] += 1;
   }
   for (const name of free) {
     if (warm.includes(name) || hold.includes(name)) continue;
     if (idleFor(name) >= (isPool(byName.get(name)) ? poolIdleMs : idleMs)) park.push(name);
   }
-  return { start, park, room, held, queue };
+  // heldBy only says anything with a redline cap; without one the answer has the shape it always had.
+  return { start, park, room, held, ...(redlineCap > 0 ? { heldBy } : {}), queue };
 }
 
 /**
@@ -263,7 +336,7 @@ export function plan(rows, state, queued, { now, idleMs, warm = [], hold = [], e
  * otherwise see the same warm idle row of the repository and do nothing, so the burst's other jobs
  * would wait for the next listing, a few per tick. Pure, exported for tests.
  */
-export function kickPlan(rows, state, job, { execCap = 0, load = 0 } = {}) {
+export function kickPlan(rows, state, job, { execCap = 0, load = 0, redlineCap = 0, redlineLoad = 0 } = {}) {
   const idle = (r) => state[r.name]?.active && !state[r.name]?.busy;
   // As in plan: a held row is never a candidate, and a stopped row whose unit systemd holds failed
   // comes last, still tried when it is the only one.
@@ -271,9 +344,14 @@ export function kickPlan(rows, state, job, { execCap = 0, load = 0 } = {}) {
     const off = cands.filter((r) => !state[r.name]?.active && !state[r.name]?.held);
     return off.find((r) => state[r.name]?.raw !== 'failed') ?? off[0];
   };
-  const capped = (r) => isExec(r) && execCap > 0 && load >= execCap;
+  const capped = (r) => {
+    const c = capClass(r);
+    return c === 'exec' ? execCap > 0 && load >= execCap : c === 'redline' ? redlineCap > 0 && redlineLoad >= redlineCap : false;
+  };
   const fits = rows.filter((r) => r.repo === job.repo && covers(r, job));
-  const mine = fits.find(idle);
+  // As in plan: an idle review listener takes a review only while fewer than redlineCap review rows have a job.
+  const busyRedline = rows.filter((r) => isRedline(r) && state[r.name]?.active && state[r.name]?.busy).length;
+  const mine = fits.find((r) => idle(r) && !(isRedline(r) && redlineCap > 0 && busyRedline >= redlineCap));
   if (mine) return { queue: false, start: null, take: mine.name };
   const own = stopped(fits);
   if (own) return capped(own) ? { queue: false, start: null, take: null } : { queue: false, start: own.name, take: own.name };
@@ -389,6 +467,8 @@ const POLL_SEC = Math.max(15, Number(env.POLL_SEC) || 30);
 const IDLE_MIN = Math.max(2, Number(env.IDLE_MIN) || 10);
 const WARM = String(env.WARM ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const EXEC_CAP = /^\d{1,3}$/.test(String(env.EXEC_CAP ?? '')) ? Number(env.EXEC_CAP) : 0;
+// Unset, or anything but a whole number, is the default; only an explicit 0 turns the Redline cap off.
+const REDLINE_CAP = /^\d{1,3}$/.test(String(env.REDLINE_CAP ?? '')) ? Number(env.REDLINE_CAP) : DEFAULT_REDLINE_CAP;
 const POOL_MAX = /^\d{1,3}$/.test(String(env.POOL_MAX ?? '')) ? Number(env.POOL_MAX) : null;
 const HOOK_SECRET = env.HOOK_SECRET || '';
 const HOOK_PORT = /^\d{2,5}$/.test(String(env.HOOK_PORT ?? '')) ? Number(env.HOOK_PORT) : 7311;
@@ -596,13 +676,13 @@ export function idleClock(prev, s, now) {
  * The tick's view as one document, for dispatcher.json. `rows` and `state` are the tick's; `marks`
  * is PARK_DIR after the tick's parks; `hold` names the rows whose repository's listing failed (a row's
  * `held` is the supervisor's crash-loop mark, a different thing);
- * `decided` is plan()'s answer; `load` the exec slots in use after the starts. A row's `tick` says
+ * `decided` is plan()'s answer; `load` the exec slots in use after the starts, `redlineLoad` the Redline ones. A row's `tick` says
  * what this tick did to it: 'start', 'park' (idle), 'park-room' (parked to make room under the exec
  * cap), or null. An idleSince of Infinity (dry mode's "logged once") serialises as null. `watched`
  * is the org rows (watchedRows) with their unit reading and the supervisor's held mark: listed apart
  * from `rows`, since no decision of this dispatcher touches them. Pure, exported for tests.
  */
-export function stateDoc({ now, mode, rows, state, marks, hold = [], queued, decided, knobs, load, github, events, deploy = null, watched = [] }) {
+export function stateDoc({ now, mode, rows, state, marks, hold = [], queued, decided, knobs, load, redlineLoad = 0, github, events, deploy = null, watched = [] }) {
   const started = new Set(decided.start);
   const room = new Set(decided.room);
   const parked = new Set(decided.park);
@@ -624,6 +704,7 @@ export function stateDoc({ now, mode, rows, state, marks, hold = [], queued, dec
     queued: queued.map((j) => ({ id: j.id, repo: j.repo, labels: j.labels, pool: routed.has(j.id) })),
     held: decided.held,
     load,
+    redlineLoad,
     github,
     events,
     deploy,
@@ -740,19 +821,19 @@ async function main() {
   } catch (err) { log(`outcomes at ${OUTCOMES}: modes not set (${err?.message ?? err}); recordOutcome sets them at its next write`); }
   const idleSince = new Map();
   let lastSources = '';
-  log(`managing the repository-scoped ephemeral rows; poll ${POLL_SEC}s, park after ${IDLE_MIN}m idle${EXEC_CAP ? `, exec cap ${EXEC_CAP}` : ''}${POOL_MAX != null ? `, pool rows ${POOL_MAX}` : ''}${WARM.length ? `, warm: ${WARM.join(', ')}` : ''}`);
+  log(`managing the repository-scoped ephemeral rows; poll ${POLL_SEC}s, park after ${IDLE_MIN}m idle${EXEC_CAP ? `, exec cap ${EXEC_CAP}` : ''}${REDLINE_CAP ? `, redline cap ${REDLINE_CAP}` : ''}${POOL_MAX != null ? `, pool rows ${POOL_MAX}` : ''}${WARM.length ? `, warm: ${WARM.join(', ')}` : ''}`);
   const waker = makeWaker();
   // While jobs wait on the exec cap, a finished job is when a slot frees: tick then, not at the poll.
   let held = 0;
   // The last tick's view, for the kick path: rows, their state, and the exec slots in use after its starts.
-  let last = { rows: [], state: {}, load: 0 };
+  let last = { rows: [], state: {}, load: 0, redlineLoad: 0 };
   // The last hour's starts, parks, kicks and failures, for dispatcher.json; and the last document
   // written, so a tick that fails still leaves the rows of the one before it, marked with the error.
   let events = [];
   let lastDoc = null;
   const startedAt = Date.now();
   const note = (e) => { events = recent(events, e, Date.now()); };
-  const knobs = { pollSec: POLL_SEC, idleMin: IDLE_MIN, execCap: EXEC_CAP, poolMax: POOL_MAX, warm: WARM };
+  const knobs = { pollSec: POLL_SEC, idleMin: IDLE_MIN, execCap: EXEC_CAP, redlineCap: REDLINE_CAP, poolMax: POOL_MAX, warm: WARM };
   if (HOOK_SECRET) {
     const onOutcome = (e) => {
       recordOutcome(OUTCOMES, e);
@@ -765,7 +846,7 @@ async function main() {
       if (job && !(last.kicked ??= new Set()).has(job.id)) {
         last.kicked.add(job.id);
         note({ kind: 'kick', repo: job.repo, job: job.id });
-        const fast = kickPlan(last.rows, last.state, job, { execCap: EXEC_CAP, load: last.load });
+        const fast = kickPlan(last.rows, last.state, job, { execCap: EXEC_CAP, load: last.load, redlineCap: REDLINE_CAP, redlineLoad: last.redlineLoad });
         if (fast.queue) {
           (last.pending ??= {})[job.id] = job;
           syncQueue(POOL_QUEUE, Object.values(last.pending));
@@ -779,6 +860,8 @@ async function main() {
         }
         // An exec row holds a slot once it has a job: a start, or a warm idle row taking one.
         if (row && isExec(row) && (fast.start || WARM.includes(row.name))) last.load += 1;
+        // An idle Redline listener already holds its slot (every running review row does); a start adds one.
+        if (row && isRedline(row) && fast.start) last.redlineLoad += 1;
         last.state = promised(last.state, fast, job.repo);
       }
       waker.kick();
@@ -828,12 +911,23 @@ async function main() {
         state[r.name] = { ...s, idleSince: since, claimed: r.pool ? claimOf(POOL_QUEUE, r.name) : null, held: heldNow.has(r.unit) };
       }
       for (const f of clearedMarks(readdirSync(PARK_DIR), rows, state)) rmSync(join(PARK_DIR, f), { force: true });
-      const decided = plan(rows, state, queued, { now, idleMs: IDLE_MIN * 60000, warm: WARM, hold, execCap: EXEC_CAP });
+      const decided = plan(rows, state, queued, { now, idleMs: IDLE_MIN * 60000, warm: WARM, hold, execCap: EXEC_CAP, redlineCap: REDLINE_CAP });
       const { start, park, room, queue } = decided;
       held = decided.held;
-      if (held > 0) {
-        log(`exec cap ${EXEC_CAP}: ${held} queued job(s) wait for a slot`);
-        note({ kind: 'held', n: held, why: `exec cap ${EXEC_CAP}` });
+      const rowsByName = Object.fromEntries(rows.map((r) => [r.name, r]));
+      const heldExec = decided.heldBy ? decided.heldBy.exec : held;
+      const heldRedline = decided.heldBy ? decided.heldBy.redline : 0;
+      if (heldExec > 0) {
+        log(`exec cap ${EXEC_CAP}: ${heldExec} queued job(s) wait for a slot`);
+        note({ kind: 'held', n: heldExec, why: `exec cap ${EXEC_CAP}` });
+      }
+      if (decided.room.some((n) => isRedline(rowsByName[n]))) {
+        // Review listeners were chosen for parking so that waiting reviews can start: look again once they have stopped.
+        setTimeout(() => waker.kick(), 5000).unref?.();
+      }
+      if (heldRedline > 0) {
+        log(`redline cap ${REDLINE_CAP}: ${heldRedline} queued review(s) wait for a slot`);
+        note({ kind: 'held', n: heldRedline, why: `redline cap ${REDLINE_CAP}` });
       }
       const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
       // The pool's entries: the jobs routed to it this tick stay or are written; the rest age out.
@@ -847,13 +941,13 @@ async function main() {
       }
       // What the kick path reads until the next tick: the view after this tick's starts.
       for (const name of start) state[name] = { ...state[name], active: true, busy: false, idleSince: null };
-      last = { rows, state, load: rows.filter((r) => isExec(r) && state[r.name]?.active && (state[r.name]?.busy || !WARM.includes(r.name))).length, pending: Object.fromEntries(queue.map((j) => [j.id, j])) };
+      last = { rows, state, load: rows.filter((r) => isExec(r) && state[r.name]?.active && (state[r.name]?.busy || !WARM.includes(r.name))).length, redlineLoad: rows.filter((r) => isRedline(r) && state[r.name]?.active).length, pending: Object.fromEntries(queue.map((j) => [j.id, j])) };
       // The rows a park left running: a job reached them first.
       const kept = new Set();
       for (const name of park) {
         // Read again just before the stop: a job may have reached it since the tick began.
         if (unitState(byName[name].unit).busy) { kept.add(name); continue; }
-        const why = room.includes(name) ? 'idle while jobs wait on the exec cap' : `no job for ${isPool(byName[name]) ? `${POOL_IDLE_MS / 1000}s` : `${IDLE_MIN}m`} and none waiting`;
+        const why = room.includes(name) ? `idle ${capClass(byName[name]) === 'redline' ? 'above, or while jobs wait on, the redline cap' : 'while jobs wait on the exec cap'}` : `no job for ${isPool(byName[name]) ? `${POOL_IDLE_MS / 1000}s` : `${IDLE_MIN}m`} and none waiting`;
         const where = MODE === 'on' ? registeredIn(byName[name], state) : null;
         if (where) {
           // Off GitHub before the stop (releaseRegistration); under the rate floor the stop goes as before.
@@ -883,7 +977,7 @@ async function main() {
       const github = { left: Number.isFinite(rateLeft) ? rateLeft : null, resetAt: rateReset || null, floor: rateFloor, tokens: sources, failed: [...failed.keys()] };
       const done = { ...decided, park: park.filter((n) => !kept.has(n)), room: room.filter((n) => !kept.has(n)) };
       const watched = watchedRows(manifest).map((r) => ({ ...r, ...unitState(r.unit), held: heldNow.has(r.unit) }));
-      lastDoc = stateDoc({ now, mode: MODE, rows, state, marks: readdirSync(PARK_DIR), hold, queued, decided: done, knobs, load: last.load, github, events, deploy: readDeploy(startedAt), watched });
+      lastDoc = stateDoc({ now, mode: MODE, rows, state, marks: readdirSync(PARK_DIR), hold, queued, decided: done, knobs, load: last.load, redlineLoad: last.redlineLoad, github, events, deploy: readDeploy(startedAt), watched });
       writeState(STATE, lastDoc, READ_GID);
     } catch (err) {
       const why = String(err?.message ?? err);
