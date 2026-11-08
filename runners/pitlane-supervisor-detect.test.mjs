@@ -287,3 +287,59 @@ test('unclaimed queue: only a free repository row beside a job its labels cover,
   joinQueue([build()], null, seen, now);
   assert.equal(seen.b.unclaimedSince, now - 60000);
 });
+
+test('not enabled: a manifest row whose unit apply has not enabled, beside a queued job its labels cover', async () => {
+  const { joinQueue, queuedFrom, notEnabled } = await import('./pitlane-supervisor-detect.mjs');
+  const read = (o = {}) => row({ name: 'app-read-e1', repo: 'askalf/app', unit: 'gha-ephemeral-redline@app-read-e1.service', labels: ['self-hosted', 'linux', 'x64', 'app-read'], enabled: false, active: 'inactive', sub: 'dead', inactiveMs: 9e6, regOnline: false, regBusy: false, ...o });
+  const audit = { id: 42483156065, repo: 'askalf/app', labels: ['self-hosted', 'app-read'], pool: false };
+  const seen = {};
+  const tickAt = (now, r, q = [audit]) => { const rows = [r]; joinQueue(rows, queuedFrom({ at: now, queued: q }, now), seen, now); return rows; };
+  const t0 = 1e9;
+  let [r] = tickAt(t0, read());
+  assert.equal(r.notEnabledMs, 0);
+  assert.equal(r.notEnabledJob, audit.id);
+  assert.deepEqual(notEnabled(snap([r])), [], 'the first sighting is no finding: the press may follow the deploy within the grace');
+  [r] = tickAt(t0 + T.notEnabledMs - 1, read());
+  assert.deepEqual(notEnabled(snap([r])), []);
+  [r] = tickAt(t0 + T.notEnabledMs, read());
+  const [x] = notEnabled(snap([r]));
+  assert.equal(x.class, 'not-enabled');
+  assert.equal(x.severity, 'crit');
+  assert.equal(x.row, 'app-read-e1');
+  assert.equal(x.job, audit.id);
+  assert.match(x.msg, /is in the manifest but not enabled.*queued job 42483156065 in askalf\/app has waited 2 min; run gha-runners-apply\.sh bootstrap, then apply/);
+  assert.ok(detect(snap([r])).some((y) => y.class === 'not-enabled'), 'detect() runs it');
+  assert.deepEqual(down(snap([r])), [], 'a row that is not enabled is not down: nothing is meant to start it yet');
+  assert.deepEqual(r.unclaimedMs, null, 'an inactive row is never unclaimed');
+  // apply ran (enabled), or the job is gone: no finding, and the clock resets.
+  [r] = tickAt(t0 + T.notEnabledMs + 1, read({ enabled: true }));
+  assert.equal(r.notEnabledMs, null);
+  [r] = tickAt(t0 + T.notEnabledMs + 2, read(), []);
+  assert.equal(r.notEnabledMs, null);
+  [r] = tickAt(t0 + T.notEnabledMs + 3, read());
+  assert.equal(r.notEnabledMs, 0, 'a fresh spell starts at zero');
+  // A different matching job in the first one's place, with no empty-queue tick between: the clock is
+  // the new job's, so a job just queued is never credited with the wait of one that finished.
+  const t1 = t0 + T.notEnabledMs + 3;
+  [r] = tickAt(t1 + T.notEnabledMs - 1, read());
+  assert.equal(r.notEnabledMs, T.notEnabledMs - 1);
+  const later = { ...audit, id: audit.id + 1 };
+  [r] = tickAt(t1 + T.notEnabledMs, read(), [later]);
+  assert.deepEqual([r.notEnabledMs, r.notEnabledJob], [0, later.id]);
+  assert.deepEqual(notEnabled(snap([r])), [], 'the replacement starts a new spell');
+  [r] = tickAt(t1 + 2 * T.notEnabledMs, read(), [later]);
+  assert.equal(notEnabled(snap([r]))[0].job, later.id);
+  // A queued record without an id (queuedFrom accepts one) still gets a clock from its first sighting,
+  // and the finding says so instead of naming a job.
+  const seen2 = {};
+  const noId = { repo: 'askalf/app', labels: ['self-hosted', 'app-read'], pool: false };
+  const tick2 = (now) => { const rows = [read()]; joinQueue(rows, queuedFrom({ at: now, queued: [noId] }, now), seen2, now); return rows[0]; };
+  assert.deepEqual([tick2(t0).notEnabledMs, tick2(t0).notEnabledJob], [0, null]);
+  const [y] = notEnabled(snap([tick2(t0 + T.notEnabledMs)]));
+  assert.equal(y.job, null);
+  assert.match(y.msg, /queued job \(no id\) in askalf\/app has waited 2 min/);
+  // A pool row is never judged here: the dispatcher starts it for a job, and apply enables pool rows parked.
+  const pool = read({ name: 'pool-e1', pool: 'askalf', repo: null, labels: ['self-hosted', 'app-read'] });
+  const rows = [pool]; joinQueue(rows, queuedFrom({ at: t0, queued: [audit] }, t0), {}, t0);
+  assert.equal(rows[0].notEnabledMs, null);
+});
