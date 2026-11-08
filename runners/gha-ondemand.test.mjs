@@ -744,7 +744,7 @@ test('an idle review listener is parked at once to make room while reviews wait 
   const state = { 'dario-redline-e1': idle, 'cordon-redline-e1': busy };
   // dario's idle listener (idle 40 s) holds one of two slots; cordon's review needs a stopped cordon row.
   let r = plan(REDLINED, state, [review('askalf/cordon')], { now: 40000, idleMs: 10 * MIN, redlineCap: 2 });
-  // Both slots held and a review waiting: the idle listener is parked to make room, the review starts.
+  // Both slots held and a review waiting: the idle listener is scheduled for parking and nothing starts this tick; the review can start on a later tick, once the parked listener is seen stopped and its slot is free.
   assert.deepEqual(r.room, ['dario-redline-e1']);
   assert.deepEqual(r.park, ['dario-redline-e1']);
   assert.deepEqual(r.start, [], 'the replacement waits for the park');
