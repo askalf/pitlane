@@ -30,7 +30,12 @@ jobs:
           node-version: '22'
 
       - name: Unit tests
-        run: node --test runners/*.test.mjs canary/*.test.mjs box-ci/*.test.mjs
+        # Two reporters: dot on the log (one character a test, an X for a failure; the runner streams every log
+        # line to GitHub, and TAP listed each passing test, 2,600 lines a run) and spec to a file, printed only
+        # when a test fails, since dot alone names no failing test and shows no assertion.
+        run: |
+          node --test --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination="$RUNNER_TEMP/test-report.txt" runners/*.test.mjs canary/*.test.mjs box-ci/*.test.mjs \
+            || { echo; echo "== failing tests (spec reporter)"; cat "$RUNNER_TEMP/test-report.txt"; exit 1; }
 
       - name: Shell scripts parse
         run: |

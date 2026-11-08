@@ -789,13 +789,21 @@ function beat() {
  * matters, so the failure is a log line and not the end of the tick (ending the tick would drop
  * every start and park it had planned).
  */
+/** The units startUnit refused as not enabled and has said so for; a unit leaves when it is enabled and started. */
+const refusedNotEnabled = new Set();
 function startUnit(unit) {
   // The plan skips a held row; this covers a mark written between the tick's read and the start.
   if (existsSync(join(HELD_DIR, unit))) { log(`start ${unit}: held by the supervisor after a crash loop, not started`); return; }
   // apply enables a row once its user, isolation and CPU drop-ins are in place. A row that is only in the
   // manifest has none of them: started, it runs as the template's user, and apply then takes its files away
   // mid-job (the first jobs of a new row fail between the deploy and apply).
-  try { systemctl('is-enabled', '--quiet', unit); } catch { log(`start ${unit}: not enabled, so gha-runners-apply.sh apply has not run for it; not started`); return; }
+  // Said once per spell: the plan asks for the row every tick while the job waits, and the supervisor's
+  // not-enabled finding carries the wait; a line every tick would only bury the rest of the journal.
+  try { systemctl('is-enabled', '--quiet', unit); } catch {
+    if (!refusedNotEnabled.has(unit)) { refusedNotEnabled.add(unit); log(`start ${unit}: not enabled, so gha-runners-apply.sh apply has not run for it; not started (said once until it is enabled)`); }
+    return;
+  }
+  refusedNotEnabled.delete(unit);
   rmSync(join(PARK_DIR, unit), { force: true });
   try { systemctl('reset-failed', unit); } catch (err) { log(`reset-failed ${unit}: ${String(err?.message ?? err).split('\n')[0]}`); }
   systemctl('start', '--no-block', unit);

@@ -31,6 +31,8 @@ export const THRESHOLDS = {
   // A row idle and online beside a queued job it could take, this long, has a registration GitHub no longer
   // hands jobs to. The p90 wait is under 30 s, so five minutes is no slow claim.
   unclaimedMs: 5 * 60000,
+  // A row apply has not enabled, beside a queued job its labels cover: the grace for a press that follows the host deploy.
+  notEnabledMs: 2 * 60000,
   // dispatcher.json older than this is not read: its queue is no longer the queue.
   queueFreshMs: 3 * 60000,
 };
@@ -204,7 +206,22 @@ export function unclaimedQueue(s, t = THRESHOLDS) {
     .map((r) => ({ ...f('unclaimed-queue', 'warn', r.name, `${r.name} is online and idle on GitHub but has not claimed queued job ${r.waitingJob} in ${r.repo} for ${Math.round(r.unclaimedMs / 60000)} min`), job: r.waitingJob }));
 }
 
-export const DETECTORS = [crashLoop, down, failedAtRest, dispatcherStopped, stuckJob, staleRegistration, registrationLost, unclaimedQueue, versionDrift, diskPressure, queueWait, runnerSuspect, slicePressure, isolationDrift];
+/**
+ * A repository row the manifest lists whose unit is not enabled, beside a queued job in its repository
+ * that its labels cover, for notEnabledMs (joinQueue tracks how long: a record with an id has a clock
+ * of its own, and a different id in its place starts it again; a record without an id, which queuedFrom
+ * accepts, cannot be told from the next such record, so the clock runs on across them). The host deploy installs a new
+ * row's manifest line, and the dispatcher refuses to start a unit apply has not enabled (its account,
+ * directory and drop-ins are not there yet), so the job waits until someone runs
+ * gha-runners-apply.sh bootstrap, then apply. The grace covers a press that follows the deploy.
+ * No heal: bootstrap makes an account and a directory, which no allow-listed heal does.
+ */
+export function notEnabled(s, t = THRESHOLDS) {
+  return s.rows.filter((r) => !r.pool && r.notEnabledMs !== null && r.notEnabledMs !== undefined && r.notEnabledMs >= t.notEnabledMs)
+    .map((r) => ({ ...f('not-enabled', 'crit', r.name, `${r.unit} is in the manifest but not enabled, so the dispatcher cannot start it, and queued job ${r.notEnabledJob ?? '(no id)'} in ${r.repo} has waited ${Math.round(r.notEnabledMs / 60000)} min; run gha-runners-apply.sh bootstrap, then apply`), job: r.notEnabledJob }));
+}
+
+export const DETECTORS = [crashLoop, down, failedAtRest, dispatcherStopped, stuckJob, staleRegistration, registrationLost, unclaimedQueue, notEnabled, versionDrift, diskPressure, queueWait, runnerSuspect, slicePressure, isolationDrift];
 
 /** Every finding for a snapshot, most severe first. A detector that throws becomes its own finding rather than hiding the others. */
 export function detect(s, t = THRESHOLDS) {
@@ -268,9 +285,22 @@ export function joinQueue(rows, queued, seen, now) {
     seen[k] ??= { offlineSince: null, absentSince: null };
     r.unclaimedMs = null;
     r.waitingJob = null;
+    r.notEnabledMs = null;
+    r.notEnabledJob = null;
     if (queued === null) continue;
     const labels = (r.labels ?? []).map((l) => l.toLowerCase());
     const job = r.pool || !labels.length ? null : queued.find((j) => j.repo === r.repo && j.labels.every((l) => labels.includes(String(l).toLowerCase())));
+    // A row apply has not enabled cannot take the job however long it waits (notEnabled tracks the spell).
+    // The clock is the job's: a different job in its place starts a new spell, so the finding never
+    // credits a job just queued with the wait of one that left. A record without an id (queuedFrom
+    // accepts one) cannot be told from the next such record, so its spell runs on; the clock itself
+    // always starts, from the first sighting.
+    if (job && r.enabled === false) {
+      const id = job.id ?? null;
+      if (seen[k].notEnabledSince === null || seen[k].notEnabledSince === undefined || seen[k].notEnabledJob !== id) { seen[k].notEnabledSince = now; seen[k].notEnabledJob = id; }
+      r.notEnabledMs = now - seen[k].notEnabledSince;
+      r.notEnabledJob = id;
+    } else { seen[k].notEnabledSince = null; seen[k].notEnabledJob = null; }
     const free = r.active === 'active' && r.regOnline === true && !r.regBusy && r.workerMs === null && !r.parked && !r.held;
     if (!job || !free) { seen[k].unclaimedSince = null; continue; }
     seen[k].unclaimedSince ??= now;
