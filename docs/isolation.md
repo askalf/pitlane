@@ -184,7 +184,7 @@ So each lane's key files have a group of their own, and only that lane's rows ar
 | --- | --- | --- | --- |
 | `gha-fix` | `fix-exec.env`, `fix-prompt.md` | the `<repo>-fix-e1` rows, one per repository that calls the fix workflow | `<repo>-fix` |
 | `gha-review` | `review-lane.env` | the review lane's row (`<repo>-review-e1`) | `<repo>-review` |
-| `gha-redline` | `redline.env`, `redline-prompt.md` | the `<repo>-redline-e<n>` rows and `oss-lane-redline-e1` | `redline` |
+| `gha-redline` | `redline.env`, `redline-prompt.md`, and the second lens's `redline-second.env`, `redline-second-prompt.md` | the `<repo>-redline-e<n>` rows and `oss-lane-redline-e1` | `redline` |
 | `gha-oss` | `oss-exec.env` | the OSS exec rows (`oss-1`, `oss-2`) | `oss` |
 | `gha-oss-read` | `oss-read.env` | the OSS read row (`oss-read-1`) | `oss-read` |
 | `gha-oss-write` | `oss-write.env` | the OSS write row (`oss-write-1`) | `oss-write` |
@@ -237,8 +237,8 @@ that list is inconclusive (exit 2) rather than a pass.
 The canary runs two probes at once beside the plant. pitlane has one exec row, so at least one probe
 runs on a pool row, and the coverage job (`canary/probe-coverage.mjs`) fails an enforce run in which no
 passing probe did. A third probe, `probe-redline`, runs on pitlane's Redline row (pitlane-redline-e1)
-and reads its list of expected host files from `canary/expected-readable-redline.txt` (the two Redline
-key files, named in `EXPECTED_READABLE`); coverage fails an enforce run in which it did not pass on a
+and reads its list of expected host files from `canary/expected-readable-redline.txt` (the Redline
+key files, the second lens's two among them, named in `EXPECTED_READABLE`); coverage fails an enforce run in which it did not pass on a
 Redline row. Its sibling check covers every other row's `_work`, so a Redline row that could still
 read another Redline row's directory is a finding. It runs daily in enforce mode. The OSS rows are
 registered to the sprayberry-code org, which pitlane's jobs cannot reach; a copy of the probe in a
