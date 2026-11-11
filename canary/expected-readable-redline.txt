@@ -1,6 +1,11 @@
 # Host files the Redline probe (isolation-canary.yml probe-redline, on pitlane-redline-e1) is expected
 # to be able to read, one path per line. A Redline row is gx-<row> with gha-redline as its one group,
-# which opens these two files (root:gha-redline 0640) and nothing else: any other /etc/askalf file the
-# probe can read, a stale copy of one of these among them, is a finding.
+# which opens these files (root:gha-redline 0640) and nothing else: any other /etc/askalf file the
+# probe can read, a stale copy of one of these among them, is a finding. The first two are the
+# review's env file and rubric. The last two are the second lens's (askalf/ci redline-review.yml,
+# second-env-file and second-prompt-file): the same job reads them when a caller turns that lens on.
+# A host that has not installed them yet has nothing there to read, which is no finding.
 /etc/askalf/redline.env
 /etc/askalf/redline-prompt.md
+/etc/askalf/redline-second.env
+/etc/askalf/redline-second-prompt.md
