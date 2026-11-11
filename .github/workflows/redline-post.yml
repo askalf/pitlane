@@ -20,8 +20,8 @@ permissions:
 jobs:
   post:
     # Pinned so a change to the post reaches this repository only through a reviewed bump here.
-    uses: askalf/ci/.github/workflows/redline-post-verdict.yml@50ee9df5838810bc23cd202c7da9da64a39e69f2 # main, askalf/ci#186
+    uses: askalf/ci/.github/workflows/redline-post-verdict.yml@19e815912eb0dc85202723bb42c0e76f4786c157 # main 2026-11-11, askalf/ci#205
     with:
-      redline-ref: 50ee9df5838810bc23cd202c7da9da64a39e69f2
+      redline-ref: 19e815912eb0dc85202723bb42c0e76f4786c157
     secrets:
       reviewer-token: ${{ secrets.REDLINE_REVIEWER_TOKEN }}
