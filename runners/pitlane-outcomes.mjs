@@ -11,6 +11,8 @@
 //   setup-failed            "Set up job" failed: the runner could not start the job (an action that
 //                           would not download lands here too, so this is an upper bound)
 //   runner-lost-suspect     the job failed and no step reports a failure: the runner went away
+//   oom-killed              a runner-lost-suspect job whose runner's unit the kernel OOM-killed while it ran
+//                           (withOomKill, from the host's kernel log): out of memory, not a lost runner
 //   other                   any other conclusion
 // `bad` keeps the non-success step names of a suspect job so the classes can be refined from real data.
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
@@ -80,6 +82,51 @@ export function jobOutcome(event, body) {
       .slice(0, 4).map((s) => `${plainText(s.name).slice(0, 60)}:${s.conclusion}`);
   }
   return e;
+}
+
+/**
+ * The rows whose unit the kernel OOM-killed, from `journalctl -k -o short-unix` text: the row of each
+ * `task_memcg=` path that ends in `@<row>.service` (the kernel writes it on the kill, before the job's
+ * completed delivery). With `window` ([fromMs, toMs], oomWindow), only lines whose own timestamp (the
+ * line's leading epoch seconds) is inside it count, and a line without one does not. Pure.
+ */
+export function oomRowsFromKernel(text, window = null) {
+  const out = new Set();
+  for (const line of String(text ?? '').split('\n')) {
+    const m = /task_memcg=[^\s,]*@([A-Za-z0-9._-]+)\.service/.exec(line);
+    if (!m) continue;
+    if (window) {
+      const t = /^(\d+(?:\.\d+)?)\s/.exec(line);
+      const ms = t ? Number(t[1]) * 1000 : Number.NaN;
+      if (!(ms >= window[0] && ms <= window[1])) continue;
+    }
+    out.add(m[1]);
+  }
+  return out;
+}
+
+/**
+ * The span, in epoch ms, inside which the job was certainly running: GitHub gives its start and completion
+ * in whole seconds, so the job started somewhere in [start, start + 1 s) and was still running at its
+ * completion second. The span is [start + 1 s, completion]; a kill inside it happened during this job, and
+ * one just before the start or after the completion is never counted. null when either time is not known
+ * or the span is empty (a run under a second), so a job that cannot be placed is never matched. Pure.
+ */
+export function oomWindow(e) {
+  const at = e?.at, run = e?.runMs;
+  if (!Number.isFinite(at) || !Number.isFinite(run) || run < 0) return null;
+  const from = at - run + 1000;
+  return from <= at ? [from, at] : null;
+}
+
+/**
+ * The outcome as `oom-killed` when it is runner-lost-suspect and its runner is one of `killedRows` (the
+ * rows the kernel OOM-killed during the job, oomRowsFromKernel); otherwise the same outcome. A job the
+ * kernel killed for memory has no failed step, which is what made it look like a lost runner. Pure.
+ */
+export function withOomKill(e, killedRows) {
+  if (e?.class !== 'runner-lost-suspect' || !e.runner || !(killedRows instanceof Set) || !killedRows.has(e.runner)) return e;
+  return { ...e, class: 'oom-killed' };
 }
 
 let lastPrune = '';

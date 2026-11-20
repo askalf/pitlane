@@ -4,7 +4,7 @@ import { appendFileSync, chmodSync, existsSync, mkdtempSync, statSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { KEEP_DAYS, classifyJob, jobOutcome, readOutcomes, recordOutcome, summarizeOutcomes } from './pitlane-outcomes.mjs';
+import { KEEP_DAYS, SUSPECT_CLASSES, classifyJob, jobOutcome, oomRowsFromKernel, oomWindow, readOutcomes, recordOutcome, summarizeOutcomes, withOomKill } from './pitlane-outcomes.mjs';
 
 const step = (name, conclusion) => ({ name, conclusion });
 const job = (o = {}) => ({
@@ -125,4 +125,64 @@ test('the outcomes are root\'s alone: the directory 0700, each file 0600, a file
   recordOutcome(dir, e(2, '2026-10-15T23:30:00Z'), now);
   assert.equal(statSync(old).mode & 0o777, 0o600);
   assert.deepEqual(readOutcomes(dir, 0, now).map((x) => x.id), [2, 1]);
+});
+
+test('oomRowsFromKernel: the rows of the units the kernel OOM-killed, from journalctl -k -o cat', () => {
+  const log = [
+    '.NET TP Worker invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0',
+    'oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gha.slice,mems_allowed=0,oom_memcg=/gha.slice/gha-exec.slice,task_memcg=/gha.slice/gha-exec.slice/gha-ephemeral-first-party@pool-e2.service,task=MainThread,pid=49701,uid=944',
+    'Memory cgroup out of memory: Killed process 49701 (MainThread) total-vm:53195928kB, anon-rss:860680kB',
+    'oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/gha.slice/gha-exec.slice/gha-ephemeral-first-party@platform-exec-e1.service,task=MainThread',
+    'some other kernel line naming oom_memcg=/gha.slice only',
+  ].join('\n');
+  assert.deepEqual([...oomRowsFromKernel(log)].sort(), ['platform-exec-e1', 'pool-e2']);
+  assert.equal(oomRowsFromKernel('').size, 0);
+  assert.equal(oomRowsFromKernel(undefined).size, 0);
+  assert.equal(oomRowsFromKernel('task_memcg=/system.slice/docker.service,task=x').size, 0, 'a unit with no row name is not a row');
+});
+
+test('withOomKill: a lost-runner job whose row the kernel OOM-killed is oom-killed, which is not a suspect class', () => {
+  const lost = { id: 1, at: 2, repo: 'o/r', runner: 'pool-e2', class: 'runner-lost-suspect', bad: ['Build:cancelled'] };
+  const killed = new Set(['pool-e2']);
+  assert.deepEqual(withOomKill(lost, killed), { ...lost, class: 'oom-killed' });
+  assert.equal(withOomKill(lost, new Set(['pool-e3'])), lost, 'another row killed: unchanged');
+  assert.equal(withOomKill(lost, new Set()), lost);
+  assert.equal(withOomKill(lost, null), lost, 'no kernel read: unchanged');
+  assert.equal(withOomKill({ ...lost, class: 'job-failed' }, killed).class, 'job-failed', 'only a lost-runner job is reclassed');
+  assert.equal(withOomKill({ ...lost, runner: '' }, killed).class, 'runner-lost-suspect');
+  assert.equal(SUSPECT_CLASSES.includes('oom-killed'), false);
+  const sum = summarizeOutcomes([{ ...lost, class: 'oom-killed' }, { ...lost, id: 3 }], 10, 3600000);
+  assert.equal(sum.classes['oom-killed'], 1);
+  assert.equal(sum.suspect.n, 1, 'the oom-killed job is not counted against the runners');
+});
+
+test('oomWindow: the span the job was certainly running, one second after its whole-second start to its completion', () => {
+  const at = Date.parse('2026-11-20T17:08:27Z');
+  assert.deepEqual(oomWindow({ at, runMs: 122000 }), [at - 122000 + 1000, at]);
+  assert.equal(new Date(oomWindow({ at, runMs: 122000 })[0]).toISOString(), '2026-11-20T17:06:26.000Z', 'the start second itself is not counted');
+  assert.equal(oomWindow({ at, runMs: 500 }), null, 'a run under a second has no span');
+  assert.deepEqual(oomWindow({ at, runMs: 1000 }), [at, at]);
+  assert.equal(oomWindow({ at, runMs: null }), null, 'no start: no read, so an earlier job\'s kill on the row cannot match');
+  assert.equal(oomWindow({ at, runMs: undefined }), null);
+  assert.equal(oomWindow({ at, runMs: -5 }), null);
+  assert.equal(oomWindow({ at: Number.NaN, runMs: 1000 }), null);
+  assert.equal(oomWindow(null), null);
+});
+
+test('oomRowsFromKernel with a window: a kill counts only by its own timestamp inside the span', () => {
+  // A job GitHub reports as started 17:06:25 and completed 17:08:27 (UTC): the span is 17:06:26 to 17:08:27.
+  const at = Date.parse('2026-11-20T17:08:27Z');
+  const w = oomWindow({ at, runMs: 122000 });
+  const kill = (iso) => `${(Date.parse(iso) / 1000).toFixed(6)} host kernel: oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/gha.slice/gha-exec.slice/gha-ephemeral-first-party@pool-e2.service,task=MainThread`;
+  const rows = (iso) => oomRowsFromKernel(kill(iso), w);
+  assert.equal(rows('2026-11-20T17:06:25.100Z').size, 0, 'inside the start second: maybe before the job started, not counted');
+  assert.equal(rows('2026-11-20T17:06:25.999Z').size, 0);
+  assert.deepEqual([...rows('2026-11-20T17:06:26.000Z')], ['pool-e2'], 'from one second after the start');
+  assert.deepEqual([...rows('2026-11-20T17:08:03.978Z')], ['pool-e2'], 'the kill of 2026-11-20, inside the run');
+  assert.deepEqual([...rows('2026-11-20T17:08:27.000Z')], ['pool-e2'], 'at the completion second');
+  assert.equal(rows('2026-11-20T17:08:27.001Z').size, 0, 'after the completion: not counted');
+  assert.equal(rows('2026-11-20T17:08:29.000Z').size, 0);
+  assert.equal(oomRowsFromKernel('oom-kill:task_memcg=/gha.slice/gha-exec.slice/gha-ephemeral-first-party@pool-e2.service', w).size, 0, 'a line without a timestamp does not count');
+  // The host's own line shape for the 17:08:03Z kill (short-unix).
+  assert.deepEqual([...oomRowsFromKernel('1795194483.978635 host kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gha.slice,mems_allowed=0,oom_memcg=/gha.slice/gha-exec.slice,task_memcg=/gha.slice/gha-exec.slice/gha-ephemeral-first-party@pool-e2.service,task=MainThread', [1795194480000, 1795194507000])], ['pool-e2']);
 });

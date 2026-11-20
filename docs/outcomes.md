@@ -31,10 +31,12 @@ The class is read from the delivery alone. It is a suspicion, not proof.
 | `job-failed` | a step of the job failed |
 | `setup-failed` | the "Set up job" step failed, so the runner could not start the job; an action that will not download lands here too, so this is an upper bound |
 | `runner-lost-suspect` | the job failed and no step reports a failure: the runner went away |
+| `oom-killed` | a job that would be `runner-lost-suspect`, whose runner's unit the kernel OOM-killed while it ran: the dispatcher reads the kernel log for that job's run when the delivery lands and counts a kill only inside the span the job was certainly running (one second after GitHub's whole-second start, to its completion); a job without both times is never reclassed |
 | `other` | any other conclusion |
 
 `setup-failed` and `runner-lost-suspect` are the suspect classes. The number to watch is their share of
-all jobs.
+all jobs. `oom-killed` is not one: the runner did its part and the job ran out of memory, which the
+supervisor's slice-pressure finding reports from the slices.
 
 ## Where it shows
 

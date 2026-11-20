@@ -61,7 +61,7 @@
 // a journal line, and a pool unit that ended failed would be visible nowhere.
 
 import { kickServer, makeWaker } from './pitlane-kick.mjs';
-import { recordOutcome } from './pitlane-outcomes.mjs';
+import { oomRowsFromKernel, oomWindow, recordOutcome, withOomKill } from './pitlane-outcomes.mjs';
 import { makePrivate, ownJobRecords, privateDir, readerGid, recordWait, writeJobRecord, writePrivate } from './pitlane-waits.mjs';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -849,8 +849,21 @@ async function main() {
   const note = (e) => { events = recent(events, e, Date.now()); };
   const knobs = { pollSec: POLL_SEC, idleMin: IDLE_MIN, execCap: EXEC_CAP, redlineCap: REDLINE_CAP, poolMax: POOL_MAX, warm: WARM };
   if (HOOK_SECRET) {
+    // A job that failed with no failed step reads as a lost runner; the kernel log says whether its row
+    // was OOM-killed while that job ran (oomWindow: its own run, or no read at all when the run's times
+    // are not known). Read only for those jobs, bounded, and a read that fails keeps the class.
+    const killedDuring = (e) => {
+      const w = oomWindow(e);
+      if (!w) return new Set();
+      // journalctl takes whole seconds; the lines carry their own timestamps (short-unix) and
+      // oomRowsFromKernel keeps only those inside the window.
+      const since = `@${Math.floor(w[0] / 1000)}`, until = `@${Math.ceil(w[1] / 1000)}`;
+      try {
+        return oomRowsFromKernel(execFileSync('journalctl', ['-k', '-q', '--no-pager', '-o', 'short-unix', '--since', since, '--until', until], { encoding: 'utf8', timeout: 5000 }), w);
+      } catch { return new Set(); }
+    };
     const onOutcome = (e) => {
-      recordOutcome(OUTCOMES, e);
+      recordOutcome(OUTCOMES, e?.class === 'runner-lost-suspect' ? withOomKill(e, killedDuring(e)) : e);
       if (held > 0) waker.kick();
     };
     // A kick names its job: the row that takes it is decided now, from the last tick's view and the
