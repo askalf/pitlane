@@ -490,6 +490,20 @@ pool-e1 pool:askalf exec gha-exec /srv/gha/pool-e1 self-hosted,Linux,X64,pool ep
   assert.deepEqual(plan(rows, {}, [{ id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-deps'] }], { now: 0, idleMs: 10 * MIN }).start, ['app-deps-e1']);
 });
 
+test('a -solo job runs only on the rows that carry its label, never the pool; the row\'s other jobs still reach the pool', () => {
+  const rows = managedRows(`
+app-exec-e1 repo:askalf/app exec gha-exec /srv/gha/app-exec-e1 self-hosted,Linux,X64,app-exec,app-solo ephemeral
+pool-e1 pool:askalf exec gha-exec /srv/gha/pool-e1 self-hosted,Linux,X64,pool ephemeral
+`);
+  const allBusy = { 'app-exec-e1': busy };
+  const one = (labels) => plan(rows, allBusy, [{ id: 9, repo: 'askalf/app', labels }], { now: 0, idleMs: 10 * MIN });
+  assert.deepEqual(one(['self-hosted', 'app-exec']).start, ['pool-e1'], 'a plain job of the same row still reaches the pool');
+  assert.deepEqual(one(['self-hosted', 'app-solo']), { start: [], park: [], room: [], held: 0, queue: [] });
+  assert.deepEqual(one(['self-hosted', 'APP-SOLO']).queue, [], 'the label is matched without case, as GitHub does');
+  assert.deepEqual(kickPlan(rows, allBusy, { id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-solo'] }), { queue: false, start: null, take: null });
+  assert.deepEqual(plan(rows, {}, [{ id: 9, repo: 'askalf/app', labels: ['self-hosted', 'app-solo'] }], { now: 0, idleMs: 10 * MIN }).start, ['app-exec-e1'], 'with its row free, it starts there');
+});
+
 test('pool starts count against the exec cap and are held like any other; held jobs keep their entries', () => {
   const r = plan(POOLED, { 'ci-exec-e1': busy, 'dario-exec-e1': busy }, [ciJob, { ...ciJob, id: 102 }], { now: 0, idleMs: 10 * MIN, execCap: 3 });
   assert.deepEqual(r.start, ['pool-e1']);

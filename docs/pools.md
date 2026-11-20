@@ -132,7 +132,10 @@ start:
    is not the pool's to guess at, the fix lane's jobs (label `<repo>-fix`) stay on the fix
    rows, the rows meant to hold that lane's key (isolation.md, Key files), and a Dependabot job
    (label `<repo>-deps`) stays on its row, because it runs a new dependency's code and a pool row
-   goes on to serve other repositories. It writes one entry per such job into
+   goes on to serve other repositories. A job that asks for a label ending `-solo` stays on the
+   rows that carry that label: it is too large to run beside its own repeat in `gha-exec.slice`
+   (platform's Build & Typecheck, label `platform-solo`, peaks near 7 G of the slice's 8 G), so
+   its rows decide how many run at once; the same rows' other jobs still reach the pool. It writes one entry per such job into
    `/run/askalf/pitlane/pool-queue/<job id>` (`repo:<owner>/<name> <labels>`) and starts one
    stopped pool row per job, under `EXEC_CAP` like any exec row. A verified webhook kick names
    its job, so every job of a burst is given its row before the next listing (`kickPlan`, in the

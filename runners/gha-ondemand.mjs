@@ -146,9 +146,15 @@ const isPool = (row) => Boolean(row?.pool);
  * (docs/isolation.md, Key files), so a pool job, which may come from any repository, never can.
  * A Dependabot job (label <repo>-deps) stays on its row the other way round: it runs a new
  * dependency's code, and a pool row goes on to serve other repositories' jobs, secrets included.
+ * A job that asks for a label ending -solo runs only on the rows that carry that label, never the
+ * pool: it is a job whose memory peak is most of gha-exec.slice, so two of it must never run at once,
+ * and its own rows decide how many can. A row carrying a -solo label still serves its other labels'
+ * jobs, and those still reach the pool.
  */
 const LANE_LABEL = /-(fix|review|deps)$/;
+const SOLO_LABEL = /-solo$/;
 const poolFor = (rows, job) => {
+  if (job.labels.some((l) => SOLO_LABEL.test(String(l).toLowerCase()))) return [];
   const plain = rows.some((r) => r.repo === job.repo && isExec(r) && covers(r, job) && !r.labels.some((l) => LANE_LABEL.test(l)));
   return plain ? rows.filter((r) => isPool(r) && job.repo.startsWith(`${r.pool}/`)) : [];
 };
