@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { cpuWindows } from './pitlane-supervisor.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPLY = readFileSync(join(HERE, 'gha-runners-apply.sh'), 'utf8');
@@ -111,4 +112,64 @@ test('the apply loop runs cpu_row for ephemeral rows right after the isolation s
   const iso = APPLY.indexOf('isolate_row "$mode" "$name" "$unit" "$user" "$dir" || continue');
   const cpu = APPLY.indexOf('cpu_row "$mode" "$name" "$unit" "$dir" || continue');
   assert.ok(iso > 0 && cpu > iso, 'cpu_row is called after isolate_row');
+});
+
+test('apply-cpu writes only the ephemeral rows\' CPU drop-ins and reloads, skipping rows apply has not set up', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cpu-'));
+  const unitDir = join(dir, 'units'); mkdirSync(unitDir, { recursive: true });
+  const sh = (p) => p.split('\\').join('/');
+  const file = join(dir, 'runners.cpu');
+  writeFileSync(file, 'a-e1 cpus=4\nb-e1 cpus=4\nc-e1 cpus=4\nd-e1 cpus=4\n');
+  writeFileSync(join(unitDir, 'gha-ephemeral-first-party@.service'), '');
+  const rec = fn(/^reconcile_cpu\(\) \{[\s\S]*?^\}$/m);
+  const driver = [
+    `UNIT_DIR='${sh(unitDir)}'; CPU_FILE='${sh(file)}'; CPU_DROPIN=30-cpu.conf; GHA_CPU_TOTAL=8`,
+    'log() { printf "%s\\n" "$*"; }',
+    `systemctl() { printf 'SYSTEMCTL %s\\n' "$*"; }`,
+    'id() { [ "$1" != nobody-here ]; }',
+    'unit_for() { printf "gha-ephemeral-first-party@%s.service" "$1"; }',
+    // a-e1 and b-e1 are set up; c-e1 is an adopt row; d-e1's account does not exist yet.
+    `rows() { printf '%s\\n' 'a-e1 repo:o/a exec gha-exec /srv/gha/a-e1 l ephemeral' 'b-e1 repo:o/b exec gha-exec /srv/gha/b-e1 l ephemeral' 'c-e1 repo:o/c exec gha-exec /srv/gha/c-e1 l adopt' 'd-e1 repo:o/d exec nobody-here /srv/gha/d-e1 l ephemeral'; }`,
+    PIECES,
+    rec,
+    'reconcile_cpu',
+  ].join('\n');
+  const r = spawnSync('bash', ['-c', driver], { encoding: 'utf8' });
+  const out = r.stdout;
+  const dropin = (row) => join(unitDir, `gha-ephemeral-first-party@${row}.service.d`, '30-cpu.conf');
+  assert.ok(existsSync(dropin('a-e1')) && existsSync(dropin('b-e1')), out + r.stderr);
+  assert.match(readFileSync(dropin('b-e1'), 'utf8'), /CPUAffinity=1 2 3 4/);
+  assert.equal(existsSync(dropin('c-e1')), false, 'an adopt row is not touched');
+  assert.equal(existsSync(dropin('d-e1')), false, 'a row whose account is missing waits for apply');
+  assert.match(out, /SYSTEMCTL daemon-reload/);
+  assert.doesNotMatch(out, /SYSTEMCTL (restart|enable|disable)/, 'no restart, no enable');
+  assert.match(out, /daemon-reload \(2 CPU drop-in\(s\) written\)/);
+  // A second run finds nothing to write and does not reload.
+  const again = spawnSync('bash', ['-c', driver], { encoding: 'utf8' }).stdout;
+  assert.match(again, /every CPU drop-in matches/);
+  assert.doesNotMatch(again, /SYSTEMCTL daemon-reload/);
+});
+
+test('the supervisor computes the same window as cpu_window, so cpu-drift and apply agree on every row', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cpu-'));
+  const file = join(dir, 'runners.cpu');
+  const list = ['# a header', 'a cpus=4', 'b weight=200', 'c cpus=4   # note', 'd cpus=7', 'e cpus=4', 'f cpus=2',
+    'g cpus=4', 'h cpus=4', 'i cpus=4', 'j cpus=1', 'k cpus=8', ''].join('\n');
+  writeFileSync(file, list);
+  const sh = (p) => p.split('\\').join('/');
+  const names = ['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'];
+  for (const total of [8, 6]) {
+    const driver = [`CPU_FILE='${sh(file)}'; GHA_CPU_TOTAL=${total}`, PIECES,
+      ...names.map((n) => `printf '%s %s\\n' '${n}' "$(cpu_window '${n}' "$(cpu_opt '${n}' cpus)")"`)].join('\n');
+    const r = spawnSync('bash', ['-c', driver], { encoding: 'utf8' });
+    const fromBash = new Map(r.stdout.trim().split('\n').map((l) => {
+      const [n, ...c] = l.split(' ');
+      return [n, [...new Set(c.map(Number))].sort((x, y) => x - y)];
+    }));
+    const fromJs = cpuWindows(list, total);
+    for (const n of names) {
+      if (Number((/cpus=(\d+)/.exec(list.split('\n').find((l) => l.startsWith(`${n} `))) ?? [])[1]) > total) continue;
+      assert.deepEqual(fromJs.get(n), fromBash.get(n), `${n} on ${total} CPUs (${r.stderr})`);
+    }
+  }
 });

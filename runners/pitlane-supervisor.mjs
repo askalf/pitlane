@@ -9,6 +9,7 @@
 // pitlane-supervisor-heal.mjs; without it the supervisor observes and changes nothing on the box.
 // Runs as root (it reads other units' cgroups); the GitHub token is the host's, sent as a header only.
 
+import { cpus } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,6 +34,7 @@ const OUT_DIR = env.PITLANE_DIR || '/run/askalf/pitlane';
 const READ_GID = readerGid();
 const CGROUP_ROOT = env.CGROUP_ROOT || '/sys/fs/cgroup';
 const ISOLATED_FILE = env.GHA_ISOLATED || '/etc/askalf/runners.isolated';
+const CPU_FILE = env.GHA_CPU || '/etc/askalf/runners.cpu';
 const RUNNERS_ROOT = env.GHA_ROOT || '/srv/gha';
 const log = (msg) => console.log(`pitlane-supervisor: ${msg}`);
 
@@ -61,7 +63,41 @@ export function parseShow(text, now = Date.now()) {
     inactiveMs: kv.ActiveState === 'active' || kv.ActiveState === 'activating' || Number.isNaN(since) ? 0 : Math.max(0, now - since),
     cgroup: kv.ControlGroup || '',
     user: kv.User || '',
+    cpuAffinity: parseAffinity(kv.CPUAffinity),
   };
+}
+
+/**
+ * The CPU window each row of runners.cpu should run on, as gha-runners-apply.sh's cpu_window computes it:
+ * the i-th row with a `cpus=N` word gets CPUs i .. i+N-1, wrapping around `total`. Row name to the sorted
+ * CPU numbers; a row without `cpus=` is not in the map. Pure.
+ */
+export function cpuWindows(text, total) {
+  const out = new Map();
+  let i = 0;
+  for (const l of String(text ?? '').split('\n')) {
+    const [name, ...words] = l.replace(/\s*#.*$/, '').trim().split(/\s+/);
+    if (!name) continue;
+    const w = words.find((x) => x.startsWith('cpus='));
+    if (!w) continue;
+    const n = Number(w.slice(5));
+    if (Number.isInteger(n) && n >= 1 && n <= total) out.set(name, [...new Set(Array.from({ length: n }, (_, k) => (i + k) % total))].sort((a, b) => a - b));
+    i++;
+  }
+  return out;
+}
+
+/** `systemctl show -p CPUAffinity` value ("0-1 6-7", "4 5 6 7", empty) -> sorted CPU numbers. Pure. */
+export function parseAffinity(value) {
+  const out = new Set();
+  for (const part of String(value ?? '').trim().split(/[\s,]+/)) {
+    if (!part) continue;
+    const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+    if (!m) continue;
+    const a = Number(m[1]), b = m[2] === undefined ? a : Number(m[2]);
+    for (let c = Math.min(a, b); c <= Math.max(a, b); c++) out.add(c);
+  }
+  return [...out].sort((x, y) => x - y);
 }
 
 /**
@@ -177,7 +213,7 @@ function recentFailures() {
   }
 }
 
-const systemctlShow = (unit) => execFileSync('systemctl', ['show', '-p', 'ActiveState,SubState,Result,ExecMainStatus,NRestarts,UnitFileState,InactiveEnterTimestamp,ControlGroup,User', unit], { encoding: 'utf8' });
+const systemctlShow = (unit) => execFileSync('systemctl', ['show', '-p', 'ActiveState,SubState,Result,ExecMainStatus,NRestarts,UnitFileState,InactiveEnterTimestamp,ControlGroup,User,CPUAffinity', unit], { encoding: 'utf8' });
 
 /** Age in ms of a live Runner.Worker in the unit's cgroup, or null. Process start time comes from /proc. */
 function workerAge(cgroup) {
@@ -295,6 +331,9 @@ async function tick(state) {
   const failures = recentFailures();
   let isolated = new Map();
   try { isolated = parseIsolated(readFileSync(ISOLATED_FILE, 'utf8')); } catch { /* no list: no row is isolated */ }
+  // No list at all: the windows are not checked (cpuWant stays null), rather than every row read as unpinned.
+  let windows = null;
+  try { windows = cpuWindows(readFileSync(CPU_FILE, 'utf8'), Number(env.GHA_CPU_TOTAL) || cpus().length); } catch { /* no list */ }
   const snapRows = rows.map((r) => {
     const sh = parseShow(systemctlShow(r.unit), now);
     let dirStat = null;
@@ -310,6 +349,7 @@ async function tick(state) {
       failures5m: failures ? (failures[r.unit] ?? 0) : 0, inactiveMs: sh.inactiveMs,
       workerMs: workerAge(sh.cgroup), diskVersion, absentMs: null, offlineMs: null, regId: null, regBusy: false,
       isolated: isolated.has(r.name), account: isolated.get(r.name) ?? null, unitUser: sh.user, dirGroup: dirStat?.group ?? null, dirMode: dirStat?.mode ?? null,
+      cpuWant: windows ? (windows.get(r.name) ?? []) : null, cpuHave: sh.cpuAffinity,
     };
   });
   const gh_ = {};

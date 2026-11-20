@@ -5,6 +5,9 @@
 #   plan                    print what apply would change; touches nothing (default)
 #   apply [--restart-idle]  write the per-unit slice drop-ins and daemon-reload; with
 #                           --restart-idle also restart changed units that have no job running
+#   apply-cpu               write only the ephemeral rows' CPU drop-ins (runners.cpu) and
+#                           daemon-reload: no account, group, directory or enable, no restart.
+#                           Run it after installing a changed runners.cpu (docs/cpu.md)
 #   bootstrap               create the gha-oss account, /srv/gha, the tool cache, and install
 #                           the pinned runner release under /opt/actions-runner/<version>
 #   upgrade [--restart-idle] install the version now pinned in /etc/askalf/gha-runner-version,
@@ -487,6 +490,28 @@ reconcile() {  # reconcile <plan|apply> [--restart-idle]
   fi
 }
 
+# The CPU drop-ins alone. A row's window comes from its line's position in runners.cpu, so a line
+# added or taken out moves the windows of the rows after it; this writes those drop-ins and reloads,
+# and touches nothing else. A row whose template or account is not there yet is skipped: apply sets it
+# up. Each unit takes its window at its next start (an ephemeral row starts again after every job).
+reconcile_cpu() {
+  local changed=0 unit
+  local -a to_restart=()
+  while read -r name scope tier user dir labels rmode; do
+    [ "$rmode" = ephemeral ] || continue
+    unit=$(unit_for "$name" "$scope" "$rmode" "$user")
+    [ -f "$UNIT_DIR/${unit%@*}@.service" ] || continue
+    id "$user" >/dev/null 2>&1 || continue
+    cpu_row apply "$name" "$unit" "$dir" || continue
+  done < <(rows)
+  if [ "$changed" -gt 0 ]; then
+    systemctl daemon-reload
+    log "  daemon-reload ($changed CPU drop-in(s) written); each unit takes its window at its next start"
+  else
+    log "  apply-cpu: every CPU drop-in matches $CPU_FILE"
+  fi
+}
+
 # ── bootstrap / upgrade ─────────────────────────────────────────────────────
 pinned() {  # -> "<version> <sha256>"
   [ -r "$VERSION_FILE" ] || die "version file not readable: $VERSION_FILE"
@@ -675,10 +700,11 @@ cmd=${1:-plan}; shift || true
 case "$cmd" in
   plan)      reconcile plan ;;
   apply)     reconcile apply "${1:-}" ;;
+  apply-cpu) reconcile_cpu ;;
   bootstrap) bootstrap ;;
   upgrade)   upgrade "${1:-}" ;;
   layout)    layout_pool ;;
   register)  register "${1:?register <name>}" ;;
   status)    status ;;
-  *) die "usage: $0 {plan|apply [--restart-idle]|bootstrap|upgrade [--restart-idle]|layout|register <name>|status}" ;;
+  *) die "usage: $0 {plan|apply [--restart-idle]|apply-cpu|bootstrap|upgrade [--restart-idle]|layout|register <name>|status}" ;;
 esac
