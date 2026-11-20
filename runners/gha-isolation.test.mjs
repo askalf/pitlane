@@ -604,6 +604,10 @@ test('the box state no job may list or read (docs/isolation.md, Host state files
   }
   const unit = (f) => readFileSync(join(HERE, f), 'utf8');
   assert.match(unit('pitlane-supervisor.service'), /^RuntimeDirectory=askalf\/pitlane$[\s\S]*^RuntimeDirectoryMode=0711$/m, 'systemd sets the mode at every start, even on a directory already there');
+  // On a fresh boot /run is empty: public/ must exist before pitlane-public sets up its bind of it.
+  assert.match(unit('pitlane-supervisor.service'), /^ExecStartPre=\/usr\/bin\/mkdir -p -m 0755 \/run\/askalf\/pitlane\/public$/m, 'the supervisor makes public/ before it counts as started');
+  assert.match(unit('pitlane-public.service'), /^After=.*\bpitlane-supervisor\.service\b/m, 'the public server starts after the supervisor');
+  assert.doesNotMatch(unit('pitlane-public.service'), /^ExecStartPre=.*mkdir/m, 'a mkdir in the public unit runs after its bind is set up');
   for (const f of ['pitlane-supervisor.service', 'gha-ondemand.service']) {
     assert.match(unit(f), /^Environment=PITLANE_READ_GID=1001$/m, `${f} gives the dashboard's group read`);
   }
