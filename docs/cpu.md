@@ -42,6 +42,12 @@ CPUWeight=200
 - A row not listed has no drop-in. Taking a row off the list and running `apply` removes it and restarts
   the row when it is idle.
 - A value outside its range holds the row (not enabled, nothing written), as for the isolation options.
+- Because a window follows the line's position, adding or taking out a `cpus=` line moves the windows of
+  every row after it. `gha-runners-apply.sh apply-cpu` writes those drop-ins and reloads systemd and does
+  nothing else (no account, directory, enable or restart); each unit takes its window at its next start.
+  Run it after installing a changed `runners.cpu`: a deploy that installs the list can run it in the same
+  step, and until yours does, run it by hand. The supervisor's `cpu-drift` finding names rows whose
+  configured `CPUAffinity` differs from what the list gives them, so a list installed without it shows.
 
 ## What it does not cover
 

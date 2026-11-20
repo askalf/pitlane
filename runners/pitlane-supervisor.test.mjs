@@ -1,7 +1,7 @@
 // node --test runners/pitlane-supervisor.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hostNumbers, journalLine, metricsText, parseHeldMark, parseIsolated, parsePinned, parseRowPinned, parseShow, parseStat, pauseMs, failuresByUnit, supervisedRows } from './pitlane-supervisor.mjs';
+import { cpuWindows, hostNumbers, journalLine, metricsText, parseAffinity, parseHeldMark, parseIsolated, parsePinned, parseRowPinned, parseShow, parseStat, pauseMs, failuresByUnit, supervisedRows } from './pitlane-supervisor.mjs';
 import { hostRowNames, ofHost } from './pitlane-waits.mjs';
 
 test('ticks start a cadence apart whatever the tick took; a tick past the cadence gets a short breath, not the next tick at once', () => {
@@ -208,4 +208,26 @@ test('hostNumbers: a job another self-hosted pool took is in none of the publish
   const mine = hostNumbers(waits, [...outcomes, { id: 5, at, repo: 'example/app', runner: 'pool-e1', conclusion: 'failure', class: 'runner-lost-suspect', waitMs: 3000, runMs: 5000 }], rows, now);
   assert.equal(mine.published.runnerSuspect, 1);
   assert.equal(mine.published.finished, 3);
+});
+
+test('cpuWindows: the i-th cpus= row gets CPUs i .. i+N-1 wrapping, as gha-runners-apply.sh cpu_window does', () => {
+  const w = cpuWindows('# header\na cpus=4\nb weight=200\nc cpus=4   # two\nd cpus=7\ne cpus=4\nf cpus=4\ng cpus=4\nh cpus=4\ni cpus=4\nbad cpus=x\n', 8);
+  assert.deepEqual(w.get('a'), [0, 1, 2, 3]);
+  assert.equal(w.has('b'), false, 'a weight-only row has no window');
+  assert.deepEqual(w.get('c'), [1, 2, 3, 4], 'the position counts cpus= lines only');
+  assert.deepEqual(w.get('d'), [0, 2, 3, 4, 5, 6, 7], 'seven from CPU 2, wrapping to 0');
+  assert.deepEqual(w.get('i'), [0, 1, 2, 7], 'the eighth cpus= row starts at CPU 7 and wraps');
+  assert.equal(w.has('bad'), false);
+  assert.deepEqual(cpuWindows('x cpus=9\n', 8).has('x'), false, 'more than the host has is not a window');
+  assert.equal(cpuWindows('', 8).size, 0);
+});
+
+test('parseAffinity: systemctl show CPUAffinity ranges and lists to sorted CPU numbers', () => {
+  assert.deepEqual(parseAffinity('0-1 6-7'), [0, 1, 6, 7]);
+  assert.deepEqual(parseAffinity('4 5 6 7'), [4, 5, 6, 7]);
+  assert.deepEqual(parseAffinity('0-5 7'), [0, 1, 2, 3, 4, 5, 7]);
+  assert.deepEqual(parseAffinity(''), []);
+  assert.deepEqual(parseAffinity(undefined), []);
+  assert.deepEqual(parseShow('ActiveState=active\nCPUAffinity=0-1 6-7\n').cpuAffinity, [0, 1, 6, 7]);
+  assert.deepEqual(parseShow('ActiveState=active\n').cpuAffinity, []);
 });

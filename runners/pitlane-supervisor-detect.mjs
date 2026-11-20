@@ -221,7 +221,21 @@ export function notEnabled(s, t = THRESHOLDS) {
     .map((r) => ({ ...f('not-enabled', 'crit', r.name, `${r.unit} is in the manifest but not enabled, so the dispatcher cannot start it, and queued job ${r.notEnabledJob ?? '(no id)'} in ${r.repo} has waited ${Math.round(r.notEnabledMs / 60000)} min; run gha-runners-apply.sh bootstrap, then apply`), job: r.notEnabledJob }));
 }
 
-export const DETECTORS = [crashLoop, down, failedAtRest, dispatcherStopped, stuckJob, staleRegistration, registrationLost, unclaimedQueue, notEnabled, versionDrift, diskPressure, queueWait, runnerSuspect, slicePressure, isolationDrift];
+/**
+ * Each row's configured CPU window (systemctl show CPUAffinity) must be the one runners.cpu gives it
+ * (cpuWindows): a line added or taken out moves the windows of the rows after it, and nothing else
+ * writes them. One finding for the host, naming up to five rows. A row with cpuWant null (no list
+ * read) is not checked.
+ */
+export function cpuDrift(s) {
+  const fmt = (a) => (a.length ? a.join(',') : 'all');
+  const off = s.rows.filter((r) => Array.isArray(r.cpuWant) && Array.isArray(r.cpuHave) && fmt(r.cpuWant) !== fmt(r.cpuHave));
+  if (!off.length) return [];
+  const named = off.slice(0, 5).map((r) => `${r.name} on ${fmt(r.cpuHave)}, not ${fmt(r.cpuWant)}`).join('; ');
+  return [f('cpu-drift', 'warn', null, `${off.length} row(s) are configured for other CPUs than runners.cpu gives them (${named}${off.length > 5 ? '; and more' : ''}); run gha-runners-apply.sh apply-cpu`)];
+}
+
+export const DETECTORS = [crashLoop, down, failedAtRest, dispatcherStopped, stuckJob, staleRegistration, registrationLost, unclaimedQueue, notEnabled, versionDrift, diskPressure, queueWait, runnerSuspect, slicePressure, isolationDrift, cpuDrift];
 
 /** Every finding for a snapshot, most severe first. A detector that throws becomes its own finding rather than hiding the others. */
 export function detect(s, t = THRESHOLDS) {

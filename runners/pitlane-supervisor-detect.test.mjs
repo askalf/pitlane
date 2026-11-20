@@ -343,3 +343,21 @@ test('not enabled: a manifest row whose unit apply has not enabled, beside a que
   const rows = [pool]; joinQueue(rows, queuedFrom({ at: t0, queued: [audit] }, t0), {}, t0);
   assert.equal(rows[0].notEnabledMs, null);
 });
+
+test('cpu-drift: a row configured for other CPUs than runners.cpu gives it is one host finding naming up to five', async () => {
+  const { cpuDrift } = await import('./pitlane-supervisor-detect.mjs');
+  const cpu = (o = {}) => row({ cpuWant: [0, 1, 2, 3], cpuHave: [0, 1, 2, 3], ...o });
+  assert.equal(cpuDrift(snap([cpu()])).length, 0);
+  assert.equal(cpuDrift(snap([row()])).length, 0, 'a row with no cpu fields is not checked');
+  assert.equal(cpuDrift(snap([cpu({ cpuWant: null, cpuHave: [4, 5] })])).length, 0, 'no list read: not checked');
+  assert.equal(cpuDrift(snap([cpu({ cpuWant: [], cpuHave: [] })])).length, 0, 'unlisted and unpinned');
+  const one = cpuDrift(snap([cpu({ name: 'pool-e1', cpuWant: [0, 1, 6, 7], cpuHave: [4, 5, 6, 7] })]));
+  assert.equal(one.length, 1);
+  assert.deepEqual([one[0].class, one[0].severity, one[0].row], ['cpu-drift', 'warn', undefined]);
+  assert.match(one[0].msg, /^1 row\(s\) .*pool-e1 on 4,5,6,7, not 0,1,6,7\); run gha-runners-apply\.sh apply-cpu$/);
+  assert.match(cpuDrift(snap([cpu({ name: 'gone', cpuWant: [], cpuHave: [0, 1] })]))[0].msg, /gone on 0,1, not all/, 'taken off the list but still pinned');
+  const many = cpuDrift(snap(Array.from({ length: 7 }, (_, i) => cpu({ name: `r${i}`, cpuHave: [4, 5, 6, 7] }))));
+  assert.equal(many.length, 1);
+  assert.match(many[0].msg, /^7 row\(s\).*r4 on .*; and more\)/);
+  assert.doesNotMatch(many[0].msg, /r5 on/);
+});
