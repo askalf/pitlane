@@ -17,6 +17,9 @@ RuntimeDirectory=askalf/pitlane
 RuntimeDirectoryMode=0711
 Environment=PITLANE_READ_GID=1001
 RuntimeDirectoryPreserve=yes
+# public/ (0755, the mode writePublic gives it) exists before this unit counts as started, so
+# pitlane-public.service, ordered after this unit, has the source of its read-only bind on a fresh boot.
+ExecStartPre=/usr/bin/mkdir -p -m 0755 /run/askalf/pitlane/public
 Restart=always
 RestartSec=30
 NoNewPrivileges=yes
