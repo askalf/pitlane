@@ -260,7 +260,7 @@ ${hourBars(body?.hours, body?.targets.p90Ms)}
 <section><h2>How it is measured</h2>
 <p><b>Start</b> is the queue wait: from GitHub creating a job to a runner starting it, the whole of the wait before a developer's logs begin. The median is the typical job; p90 is the slow tail, the wait nine jobs in ten beat. The targets are the ones the runners are tuned to; the verdict reads the whole day, and the last hour and the bars say whether the day's tail is still here.</p>
 <p><b>Run</b> is from a runner starting a job to GitHub recording it complete, for every finished job a runner took, whatever its result. It includes the runner's wrap-up after the last step, the time it takes to upload the job's logs and report it done. That wrap-up is measured on the host per job and is not broken out here yet. <b>Queued to done</b> is one job's start and run added together, the time a developer waits for a result.</p>
-<p><b>Stable</b> counts the jobs the runner itself is suspected of failing: a job that failed with no failing step, or one whose setup failed. The rest of the failures belong to the code under test.</p>
+<p><b>Stable</b> counts the jobs the runner itself is suspected of failing: a job that failed with no failing step, or one whose setup failed. A job that failed with no failing step while the kernel killed its runner for memory is the job's own and is not counted. The rest of the failures belong to the code under test.</p>
 <p>Start counts the jobs that started in the window and Run the jobs that finished in it, so the two job counts differ by the jobs still running at either edge.</p>
 </section>
 <section><h2>The method</h2>
