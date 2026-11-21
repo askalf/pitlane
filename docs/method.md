@@ -17,10 +17,11 @@ where each number comes from, what is left out, and how to check it.
   step ([docs/run-time.md](run-time.md)). The supervisor keeps one line per finished job
   ([docs/outcomes.md](outcomes.md)), and a job delivered twice counts once.
 - **Queued to done.** One job's wait plus its run, for the jobs where both are known.
-- **Runner-suspected failures.** Each finished job is classed from its delivery alone: a job that
+- **Runner-suspected failures.** Each finished job is classed from its delivery: a job that
   failed with no failing step (`runner-lost-suspect`) or whose setup failed (`setup-failed`) is
-  counted against the runner. It is a suspicion, not proof; [docs/outcomes.md](outcomes.md) lists
-  every class.
+  counted against the runner. One class also reads the host's kernel log: a job that failed with no
+  failing step while the kernel OOM-killed its runner is `oom-killed`, the job's own memory, and is
+  not counted. It is a suspicion, not proof; [docs/outcomes.md](outcomes.md) lists every class.
 
 ## The window and the percentiles
 
