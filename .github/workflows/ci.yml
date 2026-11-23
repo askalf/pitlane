@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: askalf/ci/actions/checkout-with-retry@9793f4fd0a348154f17310dc3cae44b17c9cb56d # main 2026-11-21, askalf/ci#226
+      - uses: askalf/ci/actions/checkout-with-retry@9793f4fd0a348154f17310dc3cae44b17c9cb56d # main, askalf/ci#186
         with:
           persist-credentials: false
 
