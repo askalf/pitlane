@@ -237,8 +237,10 @@ that list is inconclusive (exit 2) rather than a pass.
 The canary runs two probes at once beside the plant. pitlane has one exec row, so at least one probe
 runs on a pool row, and the coverage job (`canary/probe-coverage.mjs`) fails an enforce run in which no
 passing probe did. A third probe, `probe-redline`, runs on pitlane's Redline row (pitlane-redline-e1)
-and reads its list of expected host files from `canary/expected-readable-redline.txt` (the Redline
-key files, the second lens's two among them, named in `EXPECTED_READABLE`); coverage fails an enforce run in which it did not pass on a
+and reads its list of expected host files from `canary/expected-readable-redline.txt`: the probe's
+`EXPECTED_READABLE` setting names that file, a file name under `canary/` and not a host path, and
+the file lists the host paths the probe may read (the Redline key files, the second lens's two, and
+both lenses' model pins files among them). Coverage fails an enforce run in which it did not pass on a
 Redline row. Its sibling check covers every other row's `_work`, so a Redline row that could still
 read another Redline row's directory is a finding. It runs daily in enforce mode. The OSS rows are
 registered to the sprayberry-code org, which pitlane's jobs cannot reach; a copy of the probe in a
